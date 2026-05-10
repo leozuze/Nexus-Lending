@@ -20,19 +20,20 @@ const EyeClosed = () => (
 );
 
 export default function LogIn() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail]             = useState('');
+  const [password, setPassword]       = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showShield, setShowShield] = useState(false);
-  const [error, setError] = useState('');
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [isLoading, setIsLoading]     = useState(false);
+  const [showShield, setShowShield]   = useState(false);
+  const [error, setError]             = useState('');
+  const navigate  = useNavigate();
+  const location  = useLocation();
 
-  // If redirected from CheckRate or signup, show a contextual message
   const redirectMessage = location.state?.message ?? null;
 
-  // ── THE KEY CHANGE: updates last_login in Supabase after every login ──────
+  // ── Runs after every successful login ───────────────────────────────────
+  // FIX: last_login update uses .maybeSingle() — won't throw 406 if row is
+  // somehow missing. Non-critical; never blocks the login flow.
   const handleAuthSuccess = async (uid) => {
     try {
       await supabase
@@ -40,12 +41,12 @@ export default function LogIn() {
         .update({ last_login: new Date().toISOString() })
         .eq('id', uid);
     } catch (err) {
-      // Non-critical — don't block login if this fails
       console.warn('Could not update last_login:', err.message);
     }
     setShowShield(true);
   };
 
+  // ── Email / password login ───────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -57,68 +58,86 @@ export default function LogIn() {
     } catch (err) {
       switch (err.code) {
         case 'auth/invalid-credential':
-          setError("Invalid email or password. Please try again.");
+          setError('Invalid email or password. Please try again.');
           break;
         case 'auth/user-not-found':
-          setError("No account found with this email.");
+          setError('No account found with this email.');
           break;
         case 'auth/wrong-password':
-          setError("Incorrect password. Please try again.");
+          setError('Incorrect password. Please try again.');
           break;
         case 'auth/too-many-requests':
-          setError("Too many failed attempts. Try again later.");
+          setError('Too many failed attempts. Try again later.');
           break;
         default:
-          setError("Login failed. Please check your credentials.");
+          setError('Login failed. Please check your credentials.');
       }
       setIsLoading(false);
     }
   };
 
+  // ── Google / social login ────────────────────────────────────────────────
   const handleSocialLogin = async (provider) => {
     setError('');
+
     if (provider === 'Google') {
       try {
         setIsLoading(true);
         const userCredential = await signInWithPopup(auth, googleProvider);
-        const uid = userCredential.user.uid;
+        const { uid, displayName, email: googleEmail } = userCredential.user;
 
-        // For Google login: create a Supabase profile if one doesn't exist yet
+        // FIX: Use .maybeSingle() instead of .single() so a missing row
+        // returns null instead of throwing a 406 error.
         const { data: existing } = await supabase
           .from('users')
           .select('id')
           .eq('id', uid)
-          .single();
+          .maybeSingle();
 
         if (!existing) {
-          const displayName = userCredential.user.displayName ?? '';
-          const [firstName, ...rest] = displayName.split(' ');
-          await supabase.from('users').insert([{
-            id:         uid,
-            first_name: firstName || 'User',
-            last_name:  rest.join(' ') || '',
-            email:      userCredential.user.email,
-            province:   '',
-            loan_application_count: 0,
-          }]);
+          // New Google user — create their Supabase profile FIRST,
+          // then await it fully before navigating. This fixes the race
+          // condition where Dashboard loaded before the row existed (406/409).
+          const parts     = (displayName ?? '').split(' ');
+          const firstName = parts[0] || 'User';
+          const lastName  = parts.slice(1).join(' ') || '';
 
-          // Welcome notification for new Google users
-          await supabase.from('notifications').insert([{
-            user_id: uid,
-            message: `Welcome to Nexus, ${firstName || 'there'}! Your account is ready.`,
-            type: 'general',
-            is_read: false,
-          }]);
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert([{
+              id:                     uid,
+              first_name:             firstName,
+              last_name:              lastName,
+              email:                  googleEmail,
+              province:               '',
+              loan_application_count: 0,
+            }]);
+
+          // Only create welcome notification if the user row was created OK.
+          // If it failed (e.g. email collision), log and continue — don't block login.
+          if (!insertError) {
+            await supabase.from('notifications').insert([{
+              user_id:  uid,
+              message:  `Welcome to Nexus, ${firstName}! Your account is ready.`,
+              type:     'general',
+              is_read:  false,
+            }]);
+          } else {
+            console.warn('Google profile insert failed:', insertError.message);
+          }
         }
 
+        // All DB work done — now proceed to BotShield → Dashboard
         await handleAuthSuccess(uid);
+
       } catch (err) {
-        console.error("Social Auth Error:", err.message);
-        setError("Failed to sign in with Google. Please try again.");
+        console.error('Social Auth Error:', err.message);
+        setError('Failed to sign in with Google. Please try again.');
         setIsLoading(false);
       }
+
     } else if (provider === 'Apple') {
-      alert("Apple Login requires a paid developer account to configure.");
+      alert('Apple Login requires a paid developer account to configure.');
     }
   };
 
@@ -129,6 +148,7 @@ export default function LogIn() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-between font-sans text-gray-900">
       <div className="flex-grow flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+
         <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
           <Link to="/" className="inline-flex items-center gap-3 mb-6">
             <img src={logo} alt="Nexus Logo" className="w-12 h-12 object-contain" />
@@ -144,7 +164,6 @@ export default function LogIn() {
         <div className="mt-8 mx-auto w-full max-w-[400px]">
           <div className="bg-white py-8 px-6 shadow-xl shadow-gray-200/50 rounded-[2.5rem] border border-gray-100 sm:px-10">
 
-            {/* Contextual message from redirect (e.g. after CheckRate) */}
             {redirectMessage && (
               <div className="mb-4 p-3 bg-cyan-50 border-l-4 border-cyan-500 text-cyan-700 text-xs font-bold rounded">
                 {redirectMessage}
@@ -162,7 +181,8 @@ export default function LogIn() {
               </button>
               <button
                 onClick={() => handleSocialLogin('Apple')}
-                className="flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition-all text-sm font-semibold text-gray-700 active:scale-95"
+                disabled={isLoading}
+                className="flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition-all text-sm font-semibold text-gray-700 active:scale-95 disabled:opacity-50"
               >
                 <img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg" className="w-4 h-4 mb-1" alt="Apple" />
                 Apple
@@ -170,7 +190,9 @@ export default function LogIn() {
             </div>
 
             <div className="relative mb-6">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-100" />
+              </div>
               <div className="relative flex justify-center text-xs uppercase font-bold tracking-widest">
                 <span className="px-4 bg-white text-gray-400">Or email</span>
               </div>
@@ -191,7 +213,7 @@ export default function LogIn() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@email.com"
-                  className="block w-full px-4 py-3.5 rounded-xl border-gray-200 bg-gray-50 text-gray-900 focus:ring-2 focus:ring-cyan-500 transition-all outline-none text-sm"
+                  className="block w-full px-4 py-3.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-900 focus:ring-2 focus:ring-cyan-500 transition-all outline-none text-sm"
                 />
               </div>
 
@@ -199,11 +221,11 @@ export default function LogIn() {
                 <label className="block text-sm font-bold text-[#0B1E3D] ml-1 mb-2">Password</label>
                 <div className="relative">
                   <input
-                    type={showPassword ? "text" : "password"}
+                    type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="block w-full px-4 py-3.5 rounded-xl border-gray-200 bg-gray-50 text-gray-900 focus:ring-2 focus:ring-cyan-500 transition-all outline-none text-sm"
+                    className="block w-full px-4 py-3.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-900 focus:ring-2 focus:ring-cyan-500 transition-all outline-none text-sm"
                   />
                   <button
                     type="button"
@@ -227,12 +249,14 @@ export default function LogIn() {
                 type="submit"
                 disabled={isLoading}
                 className={`w-full py-4 rounded-xl shadow-lg text-sm font-bold text-white transition-all active:scale-95 flex justify-center items-center gap-2 ${
-                  isLoading ? 'bg-[#0B1E3D] cursor-not-allowed' : 'bg-cyan-500 hover:bg-[#0B1E3D] shadow-cyan-100'
+                  isLoading
+                    ? 'bg-[#0B1E3D] cursor-not-allowed'
+                    : 'bg-cyan-500 hover:bg-[#0B1E3D] shadow-cyan-100'
                 }`}
               >
                 {isLoading ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     Securing...
                   </>
                 ) : 'Sign In'}
@@ -241,7 +265,10 @@ export default function LogIn() {
 
             <div className="mt-8 text-center border-t border-gray-50 pt-6">
               <p className="text-sm text-gray-500 font-medium">
-                New to Nexus? <Link to="/signup" className="font-bold text-cyan-600 hover:text-cyan-500">Create account</Link>
+                New to Nexus?{' '}
+                <Link to="/signup" className="font-bold text-cyan-600 hover:text-cyan-500">
+                  Create account
+                </Link>
               </p>
             </div>
           </div>

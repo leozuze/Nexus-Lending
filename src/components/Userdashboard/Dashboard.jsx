@@ -1,32 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { auth } from '../../firebase';
 import { signOut } from 'firebase/auth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useUser } from './hooks/useUser';
 import { useNotifications } from './hooks/useNotifications';
 
-// Brand Logo Import
 import logo from '../../assets/logo.png';
 
-import Overview from './views/Overview';
-import MyLoans from './views/MyLoans';
-import Repayments from './views/Repayments';
+import Overview      from './views/Overview';
+import MyLoans       from './views/MyLoans';
+import Repayments    from './views/Repayments';
 import Notifications from './views/Notifications';
-import Profile from './views/Profile';
-import Settings from './views/Settings';
+import Profile       from './views/Profile';
+import Settings      from './views/Settings';
 
 import {
   LayoutDashboard, FileText, CalendarClock, Bell,
-  UserCircle, Settings as SettingsGear, LogOut, Zap, Menu, X
+  UserCircle, Settings as SettingsGear, LogOut, Zap, Menu, X,
 } from 'lucide-react';
 
 const NAV = [
-  { id: 'overview',      label: 'Overview',       icon: LayoutDashboard, section: 'main' },
-  { id: 'loans',         label: 'My Loans',        icon: FileText,        section: 'main' },
-  { id: 'repayments',    label: 'Repayments',      icon: CalendarClock,   section: 'main' },
-  { id: 'notifications', label: 'Notifications',   icon: Bell,            section: 'account' },
-  { id: 'profile',       label: 'Profile',         icon: UserCircle,      section: 'account' },
-  { id: 'settings',      label: 'Settings',        icon: SettingsGear,    section: 'account' },
+  { id: 'overview',      label: 'Overview',     icon: LayoutDashboard, section: 'main' },
+  { id: 'loans',         label: 'My Loans',      icon: FileText,        section: 'main' },
+  { id: 'repayments',    label: 'Repayments',    icon: CalendarClock,   section: 'main' },
+  { id: 'notifications', label: 'Notifications', icon: Bell,            section: 'account' },
+  { id: 'profile',       label: 'Profile',       icon: UserCircle,      section: 'account' },
+  { id: 'settings',      label: 'Settings',      icon: SettingsGear,    section: 'account' },
 ];
 
 const VIEW_TITLES = {
@@ -39,11 +38,25 @@ const VIEW_TITLES = {
 };
 
 export default function Dashboard() {
-  const [activeView, setActiveView] = useState('overview');
+  const location  = useLocation();
+  const navigate  = useNavigate();
+
+  // FIX: If user arrives from CheckRate with a newApplication in state,
+  // open the My Loans tab automatically so they see their new application.
+  const initialView = location.state?.newApplication ? 'loans' : 'overview';
+
+  const [activeView, setActiveView]   = useState(initialView);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const navigate = useNavigate();
+
   const { user, loading: userLoading } = useUser();
-  const { unreadCount } = useNotifications();
+  const { unreadCount }                = useNotifications();
+
+  // Clean up location state so refreshing doesn't re-trigger the tab switch
+  useEffect(() => {
+    if (location.state?.newApplication) {
+      window.history.replaceState({}, document.title);
+    }
+  }, []);
 
   const handleSignOut = async () => {
     await signOut(auth);
@@ -91,7 +104,7 @@ export default function Dashboard() {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
 
-        {/* Brand/Logo Section */}
+        {/* Brand */}
         <div className="flex items-center gap-3 px-6 py-6 border-b border-white/5">
           <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden ring-1 ring-white/10">
             <img src={logo} alt="Nexus Logo" className="w-full h-full object-contain p-1.5" />
@@ -109,7 +122,7 @@ export default function Dashboard() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 px-4 py-6 overflow-y-auto">
           <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-3">Main Menu</p>
           <div className="space-y-1">
             {NAV.filter(n => n.section === 'main').map(item => (
@@ -137,7 +150,7 @@ export default function Dashboard() {
           </div>
         </nav>
 
-        {/* User Profile Block */}
+        {/* User profile block */}
         <div className="p-4 bg-white/5 border-t border-white/5">
           {userLoading ? (
             <div className="h-12 bg-white/5 rounded-2xl animate-pulse" />
@@ -167,7 +180,7 @@ export default function Dashboard() {
       {/* ── MAIN AREA ── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
-        {/* Header/Topbar */}
+        {/* Topbar */}
         <header className="flex items-center gap-4 px-8 py-5 bg-white border-b border-gray-100 flex-shrink-0">
           <button
             onClick={() => setSidebarOpen(true)}
@@ -175,20 +188,19 @@ export default function Dashboard() {
           >
             <Menu size={20} />
           </button>
-          
+
           <div className="flex flex-col">
             <h1 className="text-lg font-black text-[#0B1E3D] tracking-tight">
               {VIEW_TITLES[activeView]}
             </h1>
             {activeView === 'overview' && !userLoading && (
               <p className="text-xs text-gray-400 font-medium">
-                {greeting()}, {user?.first_name ?? 'there'} — here is your portfolio update
+                {greeting()}, {user?.first_name ?? 'there'} there is your portfolio update
               </p>
             )}
           </div>
 
           <div className="ml-auto flex items-center gap-4">
-            {/* Notifications */}
             <button
               onClick={() => setActiveView('notifications')}
               className="relative w-10 h-10 rounded-xl border border-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-[#0B1E3D] transition-all"
@@ -201,10 +213,9 @@ export default function Dashboard() {
               )}
             </button>
 
-            {/* Quick Action */}
             <button
               onClick={() => navigate('/check-rate')}
-              className="hidden sm:flex items-center gap-2 px-5 py-2.5 bg-[#0B1E3D] text-white text-xs font-black rounded-xl hover:bg-[#22D3EE] hover:text-[#0B1E3D] transition-all shadow-md shadow-navy-900/10"
+              className="hidden sm:flex items-center gap-2 px-5 py-2.5 bg-[#0B1E3D] text-white text-xs font-black rounded-xl hover:bg-[#22D3EE] hover:text-[#0B1E3D] transition-all shadow-md"
             >
               <Zap size={14} className="fill-current" />
               Apply New Loan
@@ -212,7 +223,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Main Content Scroll Area */}
+        {/* Main content */}
         <main className="flex-1 overflow-y-auto p-8 bg-[#F8FAFC]">
           <div className="max-w-7xl mx-auto">
             {renderView()}

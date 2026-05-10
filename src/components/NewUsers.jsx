@@ -25,14 +25,14 @@ export default function NewUsers() {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    province: '',
-    email: '',
-    password: '',
+    firstName:       '',
+    lastName:        '',
+    province:        '',
+    email:           '',
+    password:        '',
     confirmPassword: '',
-    agreed: false,
-    isHuman: false
+    agreed:          false,
+    isHuman:         false,
   });
 
   const [isVerifying, setIsVerifying] = useState(false);
@@ -40,52 +40,50 @@ export default function NewUsers() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
-  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email);
-  const passwordsMatch = formData.password.length > 0 && formData.password === formData.confirmPassword;
+  const isEmailValid    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email);
+  const passwordsMatch  = formData.password.length > 0 && formData.password === formData.confirmPassword;
 
   const passwordCriteria = {
     length:  formData.password.length >= 8,
     number:  /[0-9]/.test(formData.password),
-    special: /[!@#$%^&*]/.test(formData.password)
+    special: /[!@#$%^&*]/.test(formData.password),
   };
 
   const isPasswordValid = Object.values(passwordCriteria).every(Boolean);
-  const isFormReady = isPasswordValid && passwordsMatch && formData.agreed && formData.isHuman;
+  const isFormReady     = isPasswordValid && passwordsMatch && formData.agreed && formData.isHuman;
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setError('');
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: type === 'checkbox' ? checked : value,
     }));
   };
 
   const checkPwnedPassword = async (password) => {
-    const hash = CryptoJS.SHA1(password).toString().toUpperCase();
+    const hash   = CryptoJS.SHA1(password).toString().toUpperCase();
     const prefix = hash.substring(0, 5);
     const suffix = hash.substring(5);
     try {
       const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
-      const text = await response.text();
+      const text     = await response.text();
       return text.includes(suffix);
     } catch {
-      return false;
+      return false; // Don't block signup if the pwned API is unreachable
     }
   };
 
-  // ── THE KEY CHANGE: real Firebase signup + Supabase profile save ──────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
     if (!executeRecaptcha) {
-      setError("Security service not ready. Please try again.");
+      setError('Security service not ready. Please try again.');
       return;
     }
-
     if (!isFormReady) {
-      setError("Please fulfill all requirements, ensure passwords match, and verify you are human.");
+      setError('Please fulfill all requirements, ensure passwords match, and verify you are human.');
       return;
     }
 
@@ -95,48 +93,65 @@ export default function NewUsers() {
       // Step 1: Check for breached password
       const isLeaked = await checkPwnedPassword(formData.password);
       if (isLeaked) {
-        throw new Error("Security Alert: This password was found in a data breach. Please choose a different password.");
+        throw new Error('Security Alert: This password was found in a data breach. Please choose a different password.');
       }
 
-      // Step 2: Generate reCAPTCHA token (v3 — runs silently)
+      // Step 2: reCAPTCHA v3 — runs silently
       await executeRecaptcha('signup_form');
-      // Note: server-side token verification happens in the Express backend (Phase 2)
 
       // Step 3: Create Firebase Auth account
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         formData.email,
-        formData.password
+        formData.password,
       );
       const { user } = userCredential;
 
       // Step 4: Send email verification
       await sendEmailVerification(user);
 
-      // Step 5: Save profile to Supabase users table
-      // uid from Firebase becomes the primary key in Supabase
-      const { error: supabaseError } = await supabase.from('users').insert([{
-        id:         user.uid,           // matches Firebase uid
-        first_name: formData.firstName,
-        last_name:  formData.lastName,
-        email:      formData.email,
-        province:   formData.province,
-        loan_application_count: 0,
-      }]);
+      // Step 5: Save / update Supabase profile
+      // FIX: Use upsert with onConflict:'id' instead of insert so:
+      //   a) Re-attempts after a partial failure don't 409 (duplicate id)
+      //   b) If the same Firebase uid already has a row (e.g. from a previous
+      //      Google login) we update the profile fields rather than crash.
+      const { error: upsertError } = await supabase
+        .from('users')
+        .upsert(
+          [{
+            id:                     user.uid,
+            first_name:             formData.firstName,
+            last_name:              formData.lastName,
+            email:                  formData.email,
+            province:               formData.province,
+            loan_application_count: 0,
+          }],
+          { onConflict: 'id' },  // update if row with this id already exists
+        );
 
-      if (supabaseError) {
-        // Profile save failed — log it but don't block the user
-        // The account exists in Firebase, they can still log in
-        console.error('Supabase profile save failed:', supabaseError.message);
+      if (upsertError) {
+        // Profile save failed but Firebase account exists — log, don't block
+        console.error('Supabase profile upsert failed:', upsertError.message);
       }
 
-      // Step 6: Send a welcome notification
-      await supabase.from('notifications').insert([{
-        user_id: user.uid,
-        message: `Welcome to Nexus, ${formData.firstName}! Your account is ready. Check your rate or apply for a loan to get started.`,
-        type: 'general',
-        is_read: false,
-      }]);
+      // Step 6: Welcome notification — only insert if no duplicate exists
+      // Check first to avoid duplicate welcome messages on re-attempts
+      const { data: existingWelcome } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('user_id', user.uid)
+        .eq('type', 'general')
+        .ilike('message', '%Welcome%')
+        .maybeSingle();
+
+      if (!existingWelcome) {
+        await supabase.from('notifications').insert([{
+          user_id: user.uid,
+          message: `Welcome to Nexus, ${formData.firstName}! Your account is ready. Check your rate or apply for a loan to get started.`,
+          type:    'general',
+          is_read: false,
+        }]);
+      }
 
       setIsVerifying(false);
       setIsSubmitted(true);
@@ -144,57 +159,67 @@ export default function NewUsers() {
     } catch (err) {
       setIsVerifying(false);
 
-      // Map Firebase error codes to user-friendly messages
       switch (err.code) {
         case 'auth/email-already-in-use':
-          setError("An account with this email already exists. Try logging in instead.");
+          setError('An account with this email already exists. Try logging in instead.');
           break;
         case 'auth/weak-password':
-          setError("Password is too weak. Please choose a stronger password.");
+          setError('Password is too weak. Please choose a stronger password.');
           break;
         case 'auth/invalid-email':
-          setError("Invalid email address. Please check and try again.");
+          setError('Invalid email address. Please check and try again.');
           break;
         case 'auth/network-request-failed':
-          setError("Network error. Please check your connection and try again.");
+          setError('Network error. Please check your connection and try again.');
           break;
         default:
-          setError(err.message || "Signup failed. Please try again.");
+          setError(err.message || 'Signup failed. Please try again.');
       }
     }
   };
 
+  // ── Loading state ────────────────────────────────────────────────────────
   if (isVerifying) {
     return (
-      <div className="min-h-screen bg-[#F9FBFB] flex flex-col items-center justify-center p-6 text-center font-sans">
-        <div className="w-16 h-16 border-4 border-cyan-200 border-t-cyan-600 rounded-full animate-spin mb-6"></div>
-        <h2 className="text-2xl font-bold text-[#0B1E3D] mb-2">Securing your account</h2>
-        <p className="text-gray-500">Running AI fraud protection checks...</p>
+      <div className="min-h-screen bg-[#0B1E3D] flex items-center justify-center text-white">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-6" />
+          <p className="text-cyan-400 font-bold text-[11px] uppercase tracking-[0.3em] animate-pulse">
+            Creating your secure account...
+          </p>
+        </div>
       </div>
     );
   }
 
+  // ── Success / verify email screen ────────────────────────────────────────
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center font-sans">
-        <div className="max-w-md">
-          <div className="w-20 h-20 bg-cyan-100 text-cyan-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v10a2 2 0 002 2z" />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-[2rem] shadow-xl p-10 max-w-md w-full text-center border border-gray-100">
+          <div className="w-16 h-16 bg-cyan-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-8 h-8 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
           </div>
           <h2 className="text-3xl font-bold text-[#0B1E3D] mb-4">Verify your email</h2>
           <p className="text-gray-600 mb-2">
-            We've sent a verification link to <span className="font-bold text-[#0B1E3D]">{formData.email}</span>.
+            We've sent a verification link to{' '}
+            <span className="font-bold text-[#0B1E3D]">{formData.email}</span>.
           </p>
-          <p className="text-gray-400 text-sm mb-8">Click the link in the email, then log in to access your dashboard.</p>
+          <p className="text-gray-400 text-sm mb-8">
+            Click the link in the email, then log in to access your dashboard.
+          </p>
           <button
             onClick={() => navigate('/login')}
             className="w-full py-4 bg-[#0B1E3D] text-white font-bold rounded-xl hover:bg-cyan-600 transition-colors mb-4"
           >
             Go to Login
           </button>
-          <button onClick={() => setIsSubmitted(false)} className="text-cyan-600 font-bold hover:underline text-sm">
+          <button
+            onClick={() => setIsSubmitted(false)}
+            className="text-cyan-600 font-bold hover:underline text-sm"
+          >
             Didn't get the email? Go back
           </button>
         </div>
@@ -202,9 +227,11 @@ export default function NewUsers() {
     );
   }
 
+  // ── Main signup form ─────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#F9FBFB] flex flex-col font-sans">
       <div className="flex-grow flex flex-col items-center py-12 px-4">
+
         <div className="mb-8 text-center">
           <img src={logo} alt="Nexus Logo" className="w-12 h-12 object-contain mx-auto" />
           <div className="mt-2 text-[#0B1E3D]">
@@ -241,7 +268,7 @@ export default function NewUsers() {
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Zimbabwe Province</label>
               <select name="province" required className="w-full bg-transparent outline-none px-1 pb-1 text-[#0B1E3D]" onChange={handleChange}>
                 <option value="">Select Province</option>
-                {["Bulawayo","Harare","Manicaland","Mashonaland Central","Mashonaland East","Mashonaland West","Masvingo","Matabeleland North","Matabeleland South","Midlands"].map(p => (
+                {['Bulawayo','Harare','Manicaland','Mashonaland Central','Mashonaland East','Mashonaland West','Masvingo','Matabeleland North','Matabeleland South','Midlands'].map(p => (
                   <option key={p} value={p}>{p}</option>
                 ))}
               </select>
@@ -256,7 +283,7 @@ export default function NewUsers() {
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Strong Password</label>
               <div className="flex items-center">
                 <input
-                  type={showPassword ? "text" : "password"}
+                  type={showPassword ? 'text' : 'password'}
                   name="password"
                   required
                   className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]"
@@ -271,7 +298,7 @@ export default function NewUsers() {
             <div className={`relative border-2 rounded-lg p-2 bg-[#E8F0FE] transition-all ${passwordsMatch ? 'border-green-500' : 'border-gray-200'}`}>
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Confirm Password</label>
               <input
-                type={showPassword ? "text" : "password"}
+                type={showPassword ? 'text' : 'password'}
                 name="confirmPassword"
                 required
                 className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]"
@@ -299,27 +326,46 @@ export default function NewUsers() {
                   {formData.isHuman ? 'Verified Human' : 'I am not a robot'}
                 </label>
               </div>
-              <img src="https://upload.wikimedia.org/wikipedia/commons/a/ad/RecaptchaLogo.svg" alt="reCAPTCHA" className={`w-5 h-5 transition-opacity ${formData.isHuman ? 'opacity-100' : 'opacity-40'}`} />
+              <img
+                src="https://upload.wikimedia.org/wikipedia/commons/a/ad/RecaptchaLogo.svg"
+                alt="reCAPTCHA"
+                className={`w-5 h-5 transition-opacity ${formData.isHuman ? 'opacity-100' : 'opacity-40'}`}
+              />
             </div>
 
             <div className="flex gap-3 pt-2">
-              <input type="checkbox" name="agreed" required className="mt-1 h-4 w-4 text-cyan-600 border-gray-300 rounded" onChange={handleChange} checked={formData.agreed} />
+              <input
+                type="checkbox"
+                name="agreed"
+                required
+                className="mt-1 h-4 w-4 text-cyan-600 border-gray-300 rounded"
+                onChange={handleChange}
+                checked={formData.agreed}
+              />
               <p className="text-[10px] leading-relaxed text-gray-500">
-                I agree to the <Link to="/terms" className="text-cyan-600 font-bold underline">Terms of Service</Link> and <Link to="/privacy" className="text-cyan-600 font-bold underline">Privacy Policy</Link>.
+                I agree to the{' '}
+                <Link to="/terms" className="text-cyan-600 font-bold underline">Terms of Service</Link>
+                {' '}and{' '}
+                <Link to="/privacy" className="text-cyan-600 font-bold underline">Privacy Policy</Link>.
               </p>
             </div>
 
             <button
               type="submit"
               disabled={!isFormReady}
-              className={`w-full py-4 mt-2 font-bold rounded-xl transition-all text-lg shadow-lg ${isFormReady ? 'bg-[#008199] text-white hover:bg-[#0B1E3D]' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              className={`w-full py-4 mt-2 font-bold rounded-xl transition-all text-lg shadow-lg ${
+                isFormReady
+                  ? 'bg-[#008199] text-white hover:bg-[#0B1E3D]'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
             >
               Create Account
             </button>
 
             <div className="mt-4 text-center">
               <p className="text-sm text-gray-500">
-                Already have an account? <Link to="/login" className="font-bold text-cyan-600 hover:text-cyan-500">Sign in</Link>
+                Already have an account?{' '}
+                <Link to="/login" className="font-bold text-cyan-600 hover:text-cyan-500">Sign in</Link>
               </p>
             </div>
           </form>
