@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { auth } from '../firebase'; 
 import { onAuthStateChanged } from 'firebase/auth';
-import Hero1Image from '../assets/hero03.jpg';
-import Hero2Image from '../assets/hero0.png';
-import Hero3Image from '../assets/hero02.jpg';
+import Hero1Image from '../assets/hero3.jpg';
+import Hero2Image from '../assets/hero00.jpg';
+import Hero3Image from '../assets/hero002.jpg';
 
 const FastCounter = ({ target, duration = 1500, suffix = "M" }) => {
     const [count, setCount] = useState(0);

@@ -26,13 +26,16 @@ import HelpCenter from './components/HelpCenter';
 import TermsOfUse from './components/TermsOfUse';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import CookieSettings from './components/CookieSettings'; 
-import Disclosures from './components/Disclosures'; // Added Disclosures Import
+import Disclosures from './components/Disclosures';
 
 import PersonalLoans from './components/navigation/PersonalLoans';
 import CarLoans from './components/navigation/CarLoans';
 import HealthLoans from './components/navigation/HealthLoans';
 import MortgageLoans from './components/navigation/MortgageLoans';
 import StudentLoans from './components/navigation/StudentsLoans';
+
+// Dashboard Import
+import Dashboard from './components/Userdashboard/Dashboard';
 
 const ScrollToTop = () => {
   const { pathname } = useLocation();
@@ -56,7 +59,6 @@ const Home = () => (
 const AppContent = ({ user }) => {
   const location = useLocation();
   
-  // Updated to include /terms, /privacy, /cookies, and /disclosures for a clean experience
   const isCleanPage = 
     location.pathname === '/login' || 
     location.pathname === '/signup' || 
@@ -66,7 +68,8 @@ const AppContent = ({ user }) => {
     location.pathname === '/terms' ||
     location.pathname === '/privacy' ||
     location.pathname === '/cookies' ||
-    location.pathname === '/disclosures'; // Added /disclosures to clean pages
+    location.pathname === '/disclosures' ||
+    location.pathname === '/dashboard'; // Dashboard has its own full-screen shell
 
   return (
     <div className="min-h-screen bg-white">
@@ -84,7 +87,7 @@ const AppContent = ({ user }) => {
           <Route path="/terms" element={<TermsOfUse />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/cookies" element={<CookieSettings />} /> 
-          <Route path="/disclosures" element={<Disclosures />} /> {/* Added Disclosures Route */}
+          <Route path="/disclosures" element={<Disclosures />} />
           
           {/* Dedicated Routes for each Loan Type */}
           <Route path="/personal-loans" element={<PersonalLoans />} />
@@ -113,21 +116,10 @@ const AppContent = ({ user }) => {
             } 
           />
 
-          {/* Protected Dashboard Route */}
+          {/* Protected Dashboard Route — now uses the real Dashboard component */}
           <Route 
             path="/dashboard" 
-            element={user ? (
-              <div className="p-20 text-center">
-                <h1 className="text-3xl font-bold text-[#0B1E3D]">Welcome, {user.email}</h1>
-                <p className="mt-4 text-gray-500">Your secure Nexus Dashboard is under construction.</p>
-                <button 
-                  onClick={() => auth.signOut()} 
-                  className="mt-6 px-6 py-2 bg-cyan-500 text-white rounded-lg font-bold hover:bg-cyan-600 transition-colors"
-                >
-                  Sign Out
-                </button>
-              </div>
-            ) : <Navigate to="/login" />} 
+            element={user ? <Dashboard /> : <Navigate to="/login" />} 
           />
         </Routes>
       </main>
@@ -161,7 +153,7 @@ function App() {
   }
 
   return (
-    <GoogleReCaptchaProvider reCaptchaKey="6LcX67UsAAAAAKvorG62NRqAKaMcVqvcrTpMdimy">
+    <GoogleReCaptchaProvider reCaptchaKey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}>
       <Router>
         <ScrollToTop />
         <AppContent user={user} />
