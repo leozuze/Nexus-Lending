@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { auth, googleProvider } from '../firebase'; 
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { auth, googleProvider } from '../firebase';
 import { signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth';
+import { supabase } from '../supabaseClient';
 import logo from '../assets/logo.png';
-import BotShield from './BotShield'; // Ensure the path is correct
+import BotShield from './BotShield';
 
 const EyeOpen = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -23,13 +24,26 @@ export default function LogIn() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showShield, setShowShield] = useState(false); // New state for verification
+  const [showShield, setShowShield] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const handleAuthSuccess = () => {
+  // If redirected from CheckRate or signup, show a contextual message
+  const redirectMessage = location.state?.message ?? null;
+
+  // ── THE KEY CHANGE: updates last_login in Supabase after every login ──────
+  const handleAuthSuccess = async (uid) => {
+    try {
+      await supabase
+        .from('users')
+        .update({ last_login: new Date().toISOString() })
+        .eq('id', uid);
+    } catch (err) {
+      // Non-critical — don't block login if this fails
+      console.warn('Could not update last_login:', err.message);
+    }
     setShowShield(true);
-    // The shield will handle the redirect after its internal 1.5s timeout via onVerified
   };
 
   const handleSubmit = async (e) => {
@@ -38,10 +52,9 @@ export default function LogIn() {
     setIsLoading(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      handleAuthSuccess();
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      await handleAuthSuccess(userCredential.user.uid);
     } catch (err) {
-      console.error("Auth Error:", err.code);
       switch (err.code) {
         case 'auth/invalid-credential':
           setError("Invalid email or password. Please try again.");
@@ -67,8 +80,38 @@ export default function LogIn() {
     if (provider === 'Google') {
       try {
         setIsLoading(true);
-        await signInWithPopup(auth, googleProvider);
-        handleAuthSuccess();
+        const userCredential = await signInWithPopup(auth, googleProvider);
+        const uid = userCredential.user.uid;
+
+        // For Google login: create a Supabase profile if one doesn't exist yet
+        const { data: existing } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', uid)
+          .single();
+
+        if (!existing) {
+          const displayName = userCredential.user.displayName ?? '';
+          const [firstName, ...rest] = displayName.split(' ');
+          await supabase.from('users').insert([{
+            id:         uid,
+            first_name: firstName || 'User',
+            last_name:  rest.join(' ') || '',
+            email:      userCredential.user.email,
+            province:   '',
+            loan_application_count: 0,
+          }]);
+
+          // Welcome notification for new Google users
+          await supabase.from('notifications').insert([{
+            user_id: uid,
+            message: `Welcome to Nexus, ${firstName || 'there'}! Your account is ready.`,
+            type: 'general',
+            is_read: false,
+          }]);
+        }
+
+        await handleAuthSuccess(uid);
       } catch (err) {
         console.error("Social Auth Error:", err.message);
         setError("Failed to sign in with Google. Please try again.");
@@ -79,11 +122,8 @@ export default function LogIn() {
     }
   };
 
-  // If credentials are valid, show the Nexus Security Shield
   if (showShield) {
-    return (
-      <BotShield onVerified={() => navigate('/dashboard')} />
-    );
+    return <BotShield onVerified={() => navigate('/dashboard')} />;
   }
 
   return (
@@ -103,9 +143,16 @@ export default function LogIn() {
 
         <div className="mt-8 mx-auto w-full max-w-[400px]">
           <div className="bg-white py-8 px-6 shadow-xl shadow-gray-200/50 rounded-[2.5rem] border border-gray-100 sm:px-10">
-            
+
+            {/* Contextual message from redirect (e.g. after CheckRate) */}
+            {redirectMessage && (
+              <div className="mb-4 p-3 bg-cyan-50 border-l-4 border-cyan-500 text-cyan-700 text-xs font-bold rounded">
+                {redirectMessage}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 mb-6">
-              <button 
+              <button
                 onClick={() => handleSocialLogin('Google')}
                 disabled={isLoading}
                 className="flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition-all text-sm font-semibold text-gray-700 active:scale-95 disabled:opacity-50"
@@ -113,11 +160,10 @@ export default function LogIn() {
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
                 Google
               </button>
-              <button 
+              <button
                 onClick={() => handleSocialLogin('Apple')}
                 className="flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition-all text-sm font-semibold text-gray-700 active:scale-95"
               >
-                
                 <img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg" className="w-4 h-4 mb-1" alt="Apple" />
                 Apple
               </button>
@@ -157,10 +203,9 @@ export default function LogIn() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder=""
                     className="block w-full px-4 py-3.5 rounded-xl border-gray-200 bg-gray-50 text-gray-900 focus:ring-2 focus:ring-cyan-500 transition-all outline-none text-sm"
                   />
-                  <button 
+                  <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-cyan-500"
@@ -175,7 +220,7 @@ export default function LogIn() {
                   <input type="checkbox" className="h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500" />
                   <span className="text-xs text-gray-500 font-bold">Keep me logged in</span>
                 </label>
-                <Link to="/forgot-password" size="sm" className="font-bold text-cyan-600 hover:text-cyan-500 text-xs">Forgot?</Link>
+                <Link to="/forgot-password" className="font-bold text-cyan-600 hover:text-cyan-500 text-xs">Forgot?</Link>
               </div>
 
               <button
@@ -196,7 +241,7 @@ export default function LogIn() {
 
             <div className="mt-8 text-center border-t border-gray-50 pt-6">
               <p className="text-sm text-gray-500 font-medium">
-                New to Nexus? <Link to="/signup" className="font-bold text-cyan-600 hover:text-cyan-500">New Signup</Link>
+                New to Nexus? <Link to="/signup" className="font-bold text-cyan-600 hover:text-cyan-500">Create account</Link>
               </p>
             </div>
           </div>
@@ -210,16 +255,15 @@ export default function LogIn() {
         </div>
       </div>
 
-      {/* Footer - Optimized spacing */}
-              <footer className="bg-[#0097B2] pt-8 pb-12">
-      <div className="flex flex-wrap items-center justify-center gap-5 text-white text-sm font-bold px-6">
-        <Link to="/help" className="hover:opacity-80 transition-opacity">Help</Link>
-        <span className="text-white/30">•</span>
-        <Link to="/terms" className="hover:opacity-80 transition-opacity">Terms of Use</Link>
-        <span className="text-white/30">•</span>
-        <Link to="/privacy" className="hover:opacity-80 transition-opacity">Privacy Policy</Link>
-      </div>
-    </footer>
+      <footer className="bg-[#0097B2] pt-8 pb-12">
+        <div className="flex flex-wrap items-center justify-center gap-5 text-white text-sm font-bold px-6">
+          <Link to="/help" className="hover:opacity-80 transition-opacity">Help</Link>
+          <span className="text-white/30">•</span>
+          <Link to="/terms" className="hover:opacity-80 transition-opacity">Terms of Use</Link>
+          <span className="text-white/30">•</span>
+          <Link to="/privacy" className="hover:opacity-80 transition-opacity">Privacy Policy</Link>
+        </div>
+      </footer>
     </div>
   );
 }

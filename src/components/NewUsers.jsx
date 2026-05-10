@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom'; // Fixed: Added this import to prevent breaking
+import { Link, useNavigate } from 'react-router-dom';
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
+import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import CryptoJS from 'crypto-js';
+import { auth } from '../firebase';
+import { supabase } from '../supabaseClient';
 import logo from '../assets/logo.png';
 
-// Eye Icons (SVG components) for visibility toggle
 const EyeOpen = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -20,29 +22,30 @@ const EyeClosed = () => (
 
 export default function NewUsers() {
   const { executeRecaptcha } = useGoogleReCaptcha();
-  
+  const navigate = useNavigate();
+
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
     province: '',
     email: '',
     password: '',
-    confirmPassword: '', 
+    confirmPassword: '',
     agreed: false,
-    isHuman: false 
+    isHuman: false
   });
 
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); 
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email);
   const passwordsMatch = formData.password.length > 0 && formData.password === formData.confirmPassword;
 
   const passwordCriteria = {
-    length: formData.password.length >= 8,
-    number: /[0-9]/.test(formData.password),
+    length:  formData.password.length >= 8,
+    number:  /[0-9]/.test(formData.password),
     special: /[!@#$%^&*]/.test(formData.password)
   };
 
@@ -66,11 +69,12 @@ export default function NewUsers() {
       const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
       const text = await response.text();
       return text.includes(suffix);
-    } catch (err) {
-      return false; 
+    } catch {
+      return false;
     }
   };
 
+  // ── THE KEY CHANGE: real Firebase signup + Supabase profile save ──────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -81,32 +85,82 @@ export default function NewUsers() {
     }
 
     if (!isFormReady) {
-      setError("Please fulfill all security requirements, ensure passwords match, and verify you are human.");
+      setError("Please fulfill all requirements, ensure passwords match, and verify you are human.");
       return;
     }
 
     setIsVerifying(true);
 
     try {
-      const token = await executeRecaptcha('signup_form');
-      const existingUsers = ["leozuzenoel@gmail.com"];
-      if (existingUsers.includes(formData.email.toLowerCase())) {
-        throw new Error("An account with this email already exists.");
-      }
-
+      // Step 1: Check for breached password
       const isLeaked = await checkPwnedPassword(formData.password);
       if (isLeaked) {
-        throw new Error("Security Alert: This password was found in a data breach.");
+        throw new Error("Security Alert: This password was found in a data breach. Please choose a different password.");
       }
 
-      setTimeout(() => {
-        setIsVerifying(false);
-        setIsSubmitted(true);
-      }, 2000);
+      // Step 2: Generate reCAPTCHA token (v3 — runs silently)
+      await executeRecaptcha('signup_form');
+      // Note: server-side token verification happens in the Express backend (Phase 2)
+
+      // Step 3: Create Firebase Auth account
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+      const { user } = userCredential;
+
+      // Step 4: Send email verification
+      await sendEmailVerification(user);
+
+      // Step 5: Save profile to Supabase users table
+      // uid from Firebase becomes the primary key in Supabase
+      const { error: supabaseError } = await supabase.from('users').insert([{
+        id:         user.uid,           // matches Firebase uid
+        first_name: formData.firstName,
+        last_name:  formData.lastName,
+        email:      formData.email,
+        province:   formData.province,
+        loan_application_count: 0,
+      }]);
+
+      if (supabaseError) {
+        // Profile save failed — log it but don't block the user
+        // The account exists in Firebase, they can still log in
+        console.error('Supabase profile save failed:', supabaseError.message);
+      }
+
+      // Step 6: Send a welcome notification
+      await supabase.from('notifications').insert([{
+        user_id: user.uid,
+        message: `Welcome to Nexus, ${formData.firstName}! Your account is ready. Check your rate or apply for a loan to get started.`,
+        type: 'general',
+        is_read: false,
+      }]);
+
+      setIsVerifying(false);
+      setIsSubmitted(true);
 
     } catch (err) {
       setIsVerifying(false);
-      setError(err.message);
+
+      // Map Firebase error codes to user-friendly messages
+      switch (err.code) {
+        case 'auth/email-already-in-use':
+          setError("An account with this email already exists. Try logging in instead.");
+          break;
+        case 'auth/weak-password':
+          setError("Password is too weak. Please choose a stronger password.");
+          break;
+        case 'auth/invalid-email':
+          setError("Invalid email address. Please check and try again.");
+          break;
+        case 'auth/network-request-failed':
+          setError("Network error. Please check your connection and try again.");
+          break;
+        default:
+          setError(err.message || "Signup failed. Please try again.");
+      }
     }
   };
 
@@ -129,12 +183,19 @@ export default function NewUsers() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v10a2 2 0 002 2z" />
             </svg>
           </div>
-          <h2 className="text-3xl font-bold text-[#0B1E3D] mb-4">Check your email</h2>
-          <p className="text-gray-600 mb-8">
+          <h2 className="text-3xl font-bold text-[#0B1E3D] mb-4">Verify your email</h2>
+          <p className="text-gray-600 mb-2">
             We've sent a verification link to <span className="font-bold text-[#0B1E3D]">{formData.email}</span>.
           </p>
-          <button onClick={() => setIsSubmitted(false)} className="text-cyan-600 font-bold hover:underline">
-            Didn't get the email? Resend link
+          <p className="text-gray-400 text-sm mb-8">Click the link in the email, then log in to access your dashboard.</p>
+          <button
+            onClick={() => navigate('/login')}
+            className="w-full py-4 bg-[#0B1E3D] text-white font-bold rounded-xl hover:bg-cyan-600 transition-colors mb-4"
+          >
+            Go to Login
+          </button>
+          <button onClick={() => setIsSubmitted(false)} className="text-cyan-600 font-bold hover:underline text-sm">
+            Didn't get the email? Go back
           </button>
         </div>
       </div>
@@ -154,10 +215,12 @@ export default function NewUsers() {
 
         <div className="w-full max-w-[460px] bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100 mb-12">
           <h1 className="text-2xl font-bold text-[#0B1E3D] mb-6">Create Security Account</h1>
-          
+
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 text-xs font-bold rounded flex items-center gap-3 animate-headShake">
-              <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" /></svg>
+            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 text-xs font-bold rounded flex items-center gap-3">
+              <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" />
+              </svg>
               {error}
             </div>
           )}
@@ -178,16 +241,9 @@ export default function NewUsers() {
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Zimbabwe Province</label>
               <select name="province" required className="w-full bg-transparent outline-none px-1 pb-1 text-[#0B1E3D]" onChange={handleChange}>
                 <option value="">Select Province</option>
-                <option value="Bulawayo">Bulawayo</option>
-                <option value="Harare">Harare</option>
-                <option value="Manicaland">Manicaland</option>
-                <option value="Mashonaland Central">Mashonaland Central</option>
-                <option value="Mashonaland East">Mashonaland East</option>
-                <option value="Mashonaland West">Mashonaland West</option>
-                <option value="Masvingo">Masvingo</option>
-                <option value="Matabeleland North">Matabeleland North</option>
-                <option value="Matabeleland South">Matabeleland South</option>
-                <option value="Midlands">Midlands</option>
+                {["Bulawayo","Harare","Manicaland","Mashonaland Central","Mashonaland East","Mashonaland West","Masvingo","Matabeleland North","Matabeleland South","Midlands"].map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
               </select>
             </div>
 
@@ -199,18 +255,14 @@ export default function NewUsers() {
             <div className={`relative border-2 rounded-lg p-2 bg-[#E8F0FE] transition-all ${isPasswordValid ? 'border-green-500' : 'border-gray-200'}`}>
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Strong Password</label>
               <div className="flex items-center">
-                <input 
-                  type={showPassword ? "text" : "password"} 
-                  name="password" 
-                  required 
-                  className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]" 
-                  onChange={handleChange} 
+                <input
+                  type={showPassword ? "text" : "password"}
+                  name="password"
+                  required
+                  className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]"
+                  onChange={handleChange}
                 />
-                <button 
-                  type="button" 
-                  className="px-2 text-gray-400 hover:text-cyan-600 transition-colors"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
+                <button type="button" className="px-2 text-gray-400 hover:text-cyan-600 transition-colors" onClick={() => setShowPassword(!showPassword)}>
                   {showPassword ? <EyeClosed /> : <EyeOpen />}
                 </button>
               </div>
@@ -218,28 +270,28 @@ export default function NewUsers() {
 
             <div className={`relative border-2 rounded-lg p-2 bg-[#E8F0FE] transition-all ${passwordsMatch ? 'border-green-500' : 'border-gray-200'}`}>
               <label className="block text-[10px] font-bold text-gray-400 uppercase ml-2">Confirm Password</label>
-              <input 
-                type={showPassword ? "text" : "password"} 
-                name="confirmPassword" 
-                required 
-                className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]" 
-                onChange={handleChange} 
+              <input
+                type={showPassword ? "text" : "password"}
+                name="confirmPassword"
+                required
+                className="w-full bg-transparent outline-none px-2 pb-1 text-[#0B1E3D]"
+                onChange={handleChange}
               />
             </div>
 
             <div className="mt-3 grid grid-cols-3 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
-               <Requirement label="8+ Char" met={passwordCriteria.length} />
-               <Requirement label="Number" met={passwordCriteria.number} />
-               <Requirement label="Special" met={passwordCriteria.special} />
+              <Requirement label="8+ Char"  met={passwordCriteria.length} />
+              <Requirement label="Number"   met={passwordCriteria.number} />
+              <Requirement label="Special"  met={passwordCriteria.special} />
             </div>
 
             <div className={`flex items-center gap-3 p-4 border rounded-xl mt-4 transition-all ${formData.isHuman ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
               <div className="flex items-center gap-3 flex-grow">
-                <input 
-                  type="checkbox" 
-                  name="isHuman" 
+                <input
+                  type="checkbox"
+                  name="isHuman"
                   id="humanCheck"
-                  className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 cursor-pointer" 
+                  className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 cursor-pointer"
                   onChange={handleChange}
                   checked={formData.isHuman}
                 />
@@ -253,23 +305,28 @@ export default function NewUsers() {
             <div className="flex gap-3 pt-2">
               <input type="checkbox" name="agreed" required className="mt-1 h-4 w-4 text-cyan-600 border-gray-300 rounded" onChange={handleChange} checked={formData.agreed} />
               <p className="text-[10px] leading-relaxed text-gray-500">
-                I agree to the <span className="text-cyan-600 font-bold underline">Terms of Service</span>.
+                I agree to the <Link to="/terms" className="text-cyan-600 font-bold underline">Terms of Service</Link> and <Link to="/privacy" className="text-cyan-600 font-bold underline">Privacy Policy</Link>.
               </p>
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={!isFormReady}
               className={`w-full py-4 mt-2 font-bold rounded-xl transition-all text-lg shadow-lg ${isFormReady ? 'bg-[#008199] text-white hover:bg-[#0B1E3D]' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
             >
               Create Account
             </button>
+
+            <div className="mt-4 text-center">
+              <p className="text-sm text-gray-500">
+                Already have an account? <Link to="/login" className="font-bold text-cyan-600 hover:text-cyan-500">Sign in</Link>
+              </p>
+            </div>
           </form>
         </div>
       </div>
 
-        {/* Footer - Optimized spacing */}
-                <footer className="bg-[#0097B2] pt-8 pb-12">
+      <footer className="bg-[#0097B2] pt-8 pb-12">
         <div className="flex flex-wrap items-center justify-center gap-5 text-white text-sm font-bold px-6">
           <Link to="/help" className="hover:opacity-80 transition-opacity">Help</Link>
           <span className="text-white/30">•</span>
