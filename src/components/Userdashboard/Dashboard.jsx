@@ -195,7 +195,7 @@ export default function Dashboard() {
             </h1>
             {activeView === 'overview' && !userLoading && (
               <p className="text-xs text-gray-400 font-medium">
-                {greeting()}, {user?.first_name ?? 'there'} there is your portfolio update
+                {greeting()}, {user?.first_name ?? 'there'} there is your account update
               </p>
             )}
           </div>
