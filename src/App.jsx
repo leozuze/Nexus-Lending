@@ -2,9 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { GoogleReCaptchaProvider } from 'react-google-recaptcha-v3';
 import { auth } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 
-// Component Imports
 import Navbar          from './components/Navbar';
 import Hero            from './components/Hero';
 import ProductSection  from './components/ProductSection';
@@ -26,52 +25,82 @@ import TermsOfUse      from './components/TermsOfUse';
 import PrivacyPolicy   from './components/PrivacyPolicy';
 import CookieSettings  from './components/CookieSettings';
 import Disclosures     from './components/Disclosures';
-
 import PersonalLoans   from './components/navigation/PersonalLoans';
 import CarLoans        from './components/navigation/CarLoans';
 import HealthLoans     from './components/navigation/HealthLoans';
 import MortgageLoans   from './components/navigation/MortgageLoans';
 import StudentLoans    from './components/navigation/StudentsLoans';
-
 import Dashboard       from './components/Userdashboard/Dashboard';
 
-// ── ScrollToTop ──────────────────────────────────────────────────────────────
+// ── Exported so LogIn.jsx can stamp the session after a successful login ─────
+export const SESSION_KEY = 'nexus_session_active';
+
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 };
 
-// ── Home page ────────────────────────────────────────────────────────────────
 const Home = () => (
   <>
-    <Hero />
-    <ProductSection />
-    <HowItWorks />
-    <TrustSection />
-    <FAQ />
-    <LoanTerms />
+    <Hero /><ProductSection /><HowItWorks />
+    <TrustSection /><FAQ /><LoanTerms />
   </>
 );
 
-// ── Clean-page list (no Navbar / Footer) ─────────────────────────────────────
 const CLEAN_PATHS = new Set([
-  '/login', '/signup', '/check-rate', '/contact', '/help',
-  '/terms', '/privacy', '/cookies', '/disclosures', '/dashboard',
+  '/login','/signup','/check-rate','/contact','/help',
+  '/terms','/privacy','/cookies','/disclosures','/dashboard',
 ]);
 
-// ── App shell ────────────────────────────────────────────────────────────────
+// ── Email-not-verified screen ────────────────────────────────────────────────
+const VerifyEmailWall = ({ onSignOut }) => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+    <div className="bg-white rounded-[2rem] shadow-xl p-10 max-w-md w-full text-center border border-gray-100">
+      <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
+        <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+      </div>
+      <h2 className="text-2xl font-bold text-[#0B1E3D] mb-3">Verify your email first</h2>
+      <p className="text-gray-500 text-sm mb-8">
+        We sent a verification link to your email. Click it, then come back and sign in.
+        <br /><br />
+        <span className="text-xs text-gray-400">Check your spam folder if you don't see it.</span>
+      </p>
+      <button
+        onClick={onSignOut}
+        className="w-full py-3 bg-[#0B1E3D] text-white font-bold rounded-xl hover:bg-cyan-600 transition-colors"
+      >
+        Back to Login
+      </button>
+    </div>
+  </div>
+);
+
 const AppContent = ({ user }) => {
   const location    = useLocation();
   const isCleanPage = CLEAN_PATHS.has(location.pathname);
 
+  const handleSignOut = async () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    await signOut(auth);
+  };
+
+  // ── Email verification gate ──────────────────────────────────────────────
+  // If the user is logged in via Firebase but hasn't verified their email,
+  // block the dashboard and show the verify wall instead.
+  // Google users are always verified (emailVerified = true from Google).
+  if (user && !user.emailVerified && location.pathname === '/dashboard') {
+    return <VerifyEmailWall onSignOut={handleSignOut} />;
+  }
+
   return (
     <div className="min-h-screen bg-white">
       {!isCleanPage && <Navbar />}
-
       <main>
         <Routes>
-          {/* ── Public routes ── */}
           <Route path="/"               element={<Home />} />
           <Route path="/products"       element={<ProductsLinks />} />
           <Route path="/why-nexus"      element={<WhyNexusLinks />} />
@@ -83,60 +112,69 @@ const AppContent = ({ user }) => {
           <Route path="/privacy"        element={<PrivacyPolicy />} />
           <Route path="/cookies"        element={<CookieSettings />} />
           <Route path="/disclosures"    element={<Disclosures />} />
-
-          {/* ── Loan-type landing pages ── */}
           <Route path="/personal-loans"   element={<PersonalLoans />} />
           <Route path="/car-loans"        element={<CarLoans />} />
           <Route path="/health-insurance" element={<HealthLoans />} />
           <Route path="/mortgage"         element={<MortgageLoans />} />
           <Route path="/student-loans"    element={<StudentLoans />} />
 
-          {/* ── CheckRate — public, no BotShield wrapper here ──
-              BotShield is already used *inside* CheckRate (step 0) ── */}
+          {/* CheckRate is always public */}
           <Route path="/check-rate" element={<CheckRate />} />
 
-          {/* ── Auth routes ──
-              FIX: Removed the outer <BotShield> wrapper that was double-wrapping.
-              LogIn already uses BotShield internally after successful login.
-              CheckRate already starts with BotShield as step 0.
-              Wrapping the route AND the component caused the
-              Cross-Origin-Opener-Policy errors on the Google popup. ── */}
-          <Route
-            path="/login"
-            element={user ? <Navigate to="/dashboard" replace /> : <LogIn />}
-          />
-          <Route
-            path="/signup"
-            element={user ? <Navigate to="/dashboard" replace /> : <NewUsers />}
-          />
+          {/* Auth — if already logged in this session, go to dashboard */}
+          <Route path="/login"  element={user ? <Navigate to="/dashboard" replace /> : <LogIn />} />
+          <Route path="/signup" element={user ? <Navigate to="/dashboard" replace /> : <NewUsers />} />
 
-          {/* ── Protected Dashboard ── */}
+          {/* Dashboard — requires session login + verified email */}
           <Route
             path="/dashboard"
-            element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+            element={
+              user
+                ? user.emailVerified
+                  ? <Dashboard />
+                  : <VerifyEmailWall onSignOut={handleSignOut} />
+                : <Navigate to="/login" replace />
+            }
           />
 
-          {/* ── Catch-all ── */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-
       {!isCleanPage && <Footer />}
     </div>
   );
 };
 
-// ── Root App ─────────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    // ── FIX: Force sign-out on every fresh browser open ─────────────────
+    // sessionStorage is cleared when the browser/tab is closed — unlike
+    // localStorage which Firebase uses to persist auth. So if SESSION_KEY
+    // isn't present, this is a new browser session and we sign the user out
+    // so they always have to explicitly log in. Once they log in we set the
+    // key in LogIn.jsx and it persists for the rest of that browser session.
+    const isActiveSession = sessionStorage.getItem(SESSION_KEY);
+
+    const setup = (skipSignOut = false) => {
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        setLoading(false);
+      });
+      return unsubscribe;
+    };
+
+    if (!isActiveSession) {
+      // New tab/browser open → force sign out first
+      signOut(auth).then(() => {
+        setup();
+      });
+    } else {
+      const unsub = setup();
+      return () => unsub();
+    }
   }, []);
 
   if (loading) {

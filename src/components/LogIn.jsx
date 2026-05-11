@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth';
+import {
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
 import { supabase } from '../supabaseClient';
 import logo from '../assets/logo.png';
 import BotShield from './BotShield';
+import { SESSION_KEY } from '../App';
 
 const EyeOpen = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -19,21 +24,30 @@ const EyeClosed = () => (
   </svg>
 );
 
+// ── Helper: check if a uid exists in our Supabase users table ────────────────
+// Returns true if found, false if not.
+const existsInDatabase = async (uid) => {
+  const { data } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', uid)
+    .maybeSingle();
+  return !!data;
+};
+
 export default function LogIn() {
-  const [email, setEmail]             = useState('');
-  const [password, setPassword]       = useState('');
+  const [email, setEmail]               = useState('');
+  const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading]     = useState(false);
-  const [showShield, setShowShield]   = useState(false);
-  const [error, setError]             = useState('');
-  const navigate  = useNavigate();
-  const location  = useLocation();
+  const [isLoading, setIsLoading]       = useState(false);
+  const [showShield, setShowShield]     = useState(false);
+  const [error, setError]               = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const redirectMessage = location.state?.message ?? null;
 
-  // ── Runs after every successful login ───────────────────────────────────
-  // FIX: last_login update uses .maybeSingle() — won't throw 406 if row is
-  // somehow missing. Non-critical; never blocks the login flow.
+  // ── Stamp session + proceed to BotShield ────────────────────────────────
   const handleAuthSuccess = async (uid) => {
     try {
       await supabase
@@ -41,8 +55,9 @@ export default function LogIn() {
         .update({ last_login: new Date().toISOString() })
         .eq('id', uid);
     } catch (err) {
-      console.warn('Could not update last_login:', err.message);
+      console.warn('last_login update failed:', err.message);
     }
+    sessionStorage.setItem(SESSION_KEY, 'true');
     setShowShield(true);
   };
 
@@ -54,17 +69,35 @@ export default function LogIn() {
 
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      await handleAuthSuccess(userCredential.user.uid);
+      const { user } = userCredential;
+
+      // 1. Email verification check
+      if (!user.emailVerified) {
+        await signOut(auth);
+        setError('Please verify your email before logging in. Check your inbox for the verification link.');
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Supabase database check — must have signed up first
+      const registered = await existsInDatabase(user.uid);
+      if (!registered) {
+        await signOut(auth);
+        setError('No account found. Please sign up first before logging in.');
+        setIsLoading(false);
+        return;
+      }
+
+      await handleAuthSuccess(user.uid);
+
     } catch (err) {
       switch (err.code) {
         case 'auth/invalid-credential':
+        case 'auth/wrong-password':
           setError('Invalid email or password. Please try again.');
           break;
         case 'auth/user-not-found':
-          setError('No account found with this email.');
-          break;
-        case 'auth/wrong-password':
-          setError('Incorrect password. Please try again.');
+          setError('No account found with this email. Please sign up first.');
           break;
         case 'auth/too-many-requests':
           setError('Too many failed attempts. Try again later.');
@@ -84,55 +117,32 @@ export default function LogIn() {
       try {
         setIsLoading(true);
         const userCredential = await signInWithPopup(auth, googleProvider);
-        const { uid, displayName, email: googleEmail } = userCredential.user;
+        const { uid, email: googleEmail, displayName } = userCredential.user;
 
-        // FIX: Use .maybeSingle() instead of .single() so a missing row
-        // returns null instead of throwing a 406 error.
-        const { data: existing } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', uid)
-          .maybeSingle();
+        // ── GATE: Check if this Google account exists in our Supabase DB ──
+        // Google accounts are always emailVerified=true, so we can't rely on
+        // that check. We MUST verify they signed up via our /signup page first.
+        const registered = await existsInDatabase(uid);
 
-        if (!existing) {
-          // New Google user — create their Supabase profile FIRST,
-          // then await it fully before navigating. This fixes the race
-          // condition where Dashboard loaded before the row existed (406/409).
-          const parts     = (displayName ?? '').split(' ');
-          const firstName = parts[0] || 'User';
-          const lastName  = parts.slice(1).join(' ') || '';
-
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert([{
-              id:                     uid,
-              first_name:             firstName,
-              last_name:              lastName,
-              email:                  googleEmail,
-              province:               '',
-              loan_application_count: 0,
-            }]);
-
-          // Only create welcome notification if the user row was created OK.
-          // If it failed (e.g. email collision), log and continue — don't block login.
-          if (!insertError) {
-            await supabase.from('notifications').insert([{
-              user_id:  uid,
-              message:  `Welcome to Nexus, ${firstName}! Your account is ready.`,
-              type:     'general',
-              is_read:  false,
-            }]);
-          } else {
-            console.warn('Google profile insert failed:', insertError.message);
-          }
+        if (!registered) {
+          // Sign them back out of Firebase immediately — they're not in our DB
+          await signOut(auth);
+          setError(
+            `No Nexus account found for ${googleEmail}. ` +
+            `Please create an account first before signing in with Google.`
+          );
+          setIsLoading(false);
+          return;
         }
 
-        // All DB work done — now proceed to BotShield → Dashboard
         await handleAuthSuccess(uid);
 
       } catch (err) {
-        console.error('Social Auth Error:', err.message);
-        setError('Failed to sign in with Google. Please try again.');
+        // If error is one we set ourselves (string errors), it's already shown
+        if (err.code !== 'auth/popup-closed-by-user') {
+          console.error('Google login error:', err.message);
+          if (!error) setError('Failed to sign in with Google. Please try again.');
+        }
         setIsLoading(false);
       }
 
@@ -199,8 +209,18 @@ export default function LogIn() {
             </div>
 
             {error && (
-              <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 text-xs font-bold rounded animate-pulse">
+              <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 text-xs font-bold rounded">
                 {error}
+                {(error.includes('sign up') || error.includes('Sign up') || error.includes('create an account')) && (
+                  <div className="mt-2">
+                    <Link
+                      to="/signup"
+                      className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors"
+                    >
+                      Create Account →
+                    </Link>
+                  </div>
+                )}
               </div>
             )}
 
@@ -257,7 +277,7 @@ export default function LogIn() {
                 {isLoading ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Securing...
+                    Verifying...
                   </>
                 ) : 'Sign In'}
               </button>
@@ -284,9 +304,9 @@ export default function LogIn() {
 
       <footer className="bg-[#0097B2] pt-8 pb-12">
         <div className="flex flex-wrap items-center justify-center gap-5 text-white text-sm font-bold px-6">
-          <Link to="/help" className="hover:opacity-80 transition-opacity">Help</Link>
+          <Link to="/help"    className="hover:opacity-80 transition-opacity">Help</Link>
           <span className="text-white/30">•</span>
-          <Link to="/terms" className="hover:opacity-80 transition-opacity">Terms of Use</Link>
+          <Link to="/terms"   className="hover:opacity-80 transition-opacity">Terms of Use</Link>
           <span className="text-white/30">•</span>
           <Link to="/privacy" className="hover:opacity-80 transition-opacity">Privacy Policy</Link>
         </div>
