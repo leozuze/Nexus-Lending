@@ -49,8 +49,8 @@ const Home = () => (
 );
 
 const CLEAN_PATHS = new Set([
-  '/login','/signup','/check-rate','/contact','/help',
-  '/terms','/privacy','/cookies','/disclosures','/dashboard',
+  '/login', '/signup', '/check-rate', '/contact', '/help',
+  '/terms', '/privacy', '/cookies', '/disclosures', '/dashboard',
 ]);
 
 // ── Email-not-verified screen ────────────────────────────────────────────────
@@ -88,14 +88,6 @@ const AppContent = ({ user }) => {
     await signOut(auth);
   };
 
-  // ── Email verification gate ──────────────────────────────────────────────
-  // If the user is logged in via Firebase but hasn't verified their email,
-  // block the dashboard and show the verify wall instead.
-  // Google users are always verified (emailVerified = true from Google).
-  if (user && !user.emailVerified && location.pathname === '/dashboard') {
-    return <VerifyEmailWall onSignOut={handleSignOut} />;
-  }
-
   return (
     <div className="min-h-screen bg-white">
       {!isCleanPage && <Navbar />}
@@ -118,14 +110,14 @@ const AppContent = ({ user }) => {
           <Route path="/mortgage"         element={<MortgageLoans />} />
           <Route path="/student-loans"    element={<StudentLoans />} />
 
-          {/* CheckRate is always public */}
+          {/* Always public */}
           <Route path="/check-rate" element={<CheckRate />} />
 
-          {/* Auth — if already logged in this session, go to dashboard */}
+          {/* Auth pages — redirect to dashboard if already in an active session */}
           <Route path="/login"  element={user ? <Navigate to="/dashboard" replace /> : <LogIn />} />
           <Route path="/signup" element={user ? <Navigate to="/dashboard" replace /> : <NewUsers />} />
 
-          {/* Dashboard — requires session login + verified email */}
+          {/* Dashboard — requires verified Firebase user + active session stamp */}
           <Route
             path="/dashboard"
             element={
@@ -150,31 +142,46 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // ── FIX: Force sign-out on every fresh browser open ─────────────────
-    // sessionStorage is cleared when the browser/tab is closed — unlike
-    // localStorage which Firebase uses to persist auth. So if SESSION_KEY
-    // isn't present, this is a new browser session and we sign the user out
-    // so they always have to explicitly log in. Once they log in we set the
-    // key in LogIn.jsx and it persists for the rest of that browser session.
-    const isActiveSession = sessionStorage.getItem(SESSION_KEY);
+    // ── Session gate ─────────────────────────────────────────────────────
+    // sessionStorage is wiped whenever the browser tab/window is fully closed.
+    // Firebase persists auth in localStorage across browser restarts, so we
+    // must manually sign out on every fresh session and force the user to log
+    // in again. SESSION_KEY is written by LogIn.jsx on successful login.
+    //
+    // CRITICAL FIX: the previous code called setup() inside .then() without
+    // returning the unsubscribe — React's useEffect cleanup never ran, so the
+    // onAuthStateChanged listener leaked and fired stale user=null events that
+    // kicked the user back to /login milliseconds after reaching /dashboard.
+    //
+    // Fix: always register onAuthStateChanged synchronously and let it handle
+    // the null state naturally after signOut resolves. We track a `ready` flag
+    // so we only setLoading(false) after the sign-out has completed (if needed).
 
-    const setup = (skipSignOut = false) => {
-      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const isActiveSession = sessionStorage.getItem(SESSION_KEY);
+    let unsubscribe = null;
+
+    const attachListener = () => {
+      unsubscribe = onAuthStateChanged(auth, (currentUser) => {
         setUser(currentUser);
         setLoading(false);
       });
-      return unsubscribe;
     };
 
     if (!isActiveSession) {
-      // New tab/browser open → force sign out first
-      signOut(auth).then(() => {
-        setup();
+      // Fresh browser open — sign out any persisted Firebase session first,
+      // THEN attach the listener so it only fires once with user=null.
+      signOut(auth).finally(() => {
+        attachListener();
       });
     } else {
-      const unsub = setup();
-      return () => unsub();
+      // Active session — attach immediately; Firebase resolves from cache fast.
+      attachListener();
     }
+
+    // Always clean up the listener, regardless of which branch ran.
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   if (loading) {
@@ -183,7 +190,7 @@ function App() {
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-[#0B1E3D] font-bold tracking-widest text-xs uppercase">
-            Initializing Nexus AI...
+            Initializing Nexus...
           </p>
         </div>
       </div>

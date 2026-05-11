@@ -4,6 +4,7 @@ import { signOut } from 'firebase/auth';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useUser } from './hooks/useUser';
 import { useNotifications } from './hooks/useNotifications';
+import { SESSION_KEY } from '../../App';
 
 import logo from '../../assets/logo.png';
 
@@ -38,29 +39,28 @@ const VIEW_TITLES = {
 };
 
 export default function Dashboard() {
-  const location  = useLocation();
-  const navigate  = useNavigate();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  // FIX: If user arrives from CheckRate with a newApplication in state,
-  // open the My Loans tab automatically so they see their new application.
   const initialView = location.state?.newApplication ? 'loans' : 'overview';
-
-  const [activeView, setActiveView]   = useState(initialView);
+  const [activeView, setActiveView] = useState(initialView);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const { user, loading: userLoading } = useUser();
   const { unreadCount }                = useNotifications();
 
-  // Clean up location state so refreshing doesn't re-trigger the tab switch
+  // Clear newApplication state so a refresh doesn't re-trigger the tab switch
   useEffect(() => {
     if (location.state?.newApplication) {
       window.history.replaceState({}, document.title);
     }
   }, []);
 
+  // Sign out: clear session stamp first so App.jsx doesn't see a stale session
   const handleSignOut = async () => {
+    sessionStorage.removeItem(SESSION_KEY);
     await signOut(auth);
-    navigate('/login');
+    navigate('/login', { replace: true });
   };
 
   const initials = user
@@ -195,7 +195,7 @@ export default function Dashboard() {
             </h1>
             {activeView === 'overview' && !userLoading && (
               <p className="text-xs text-gray-400 font-medium">
-                {greeting()}, {user?.first_name ?? 'there'} there is your account update
+                {greeting()}, {user?.first_name ?? 'there'} — here is your account update
               </p>
             )}
           </div>
