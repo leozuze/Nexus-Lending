@@ -1,41 +1,36 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
-import { ShieldCheck, Eye, Zap, ChevronLeft, ChevronRight } from 'lucide-react'; 
-import Bridget from '../assets/student.jpg';
-import Elena from '../assets/woman.jpg';
-import Jordan from '../assets/father.jpg';
-
-const socialFeed = [
-    {
-        name: "Bridget Kwenda",
-        location: "MBA Borrower",
-         
-        title: "Simplified the MBA funding process entirely",
-        comment: "Nexus made it happen when others couldn't. Found a rate 1.5% lower than my local bank using their advanced matching tools.",
-        Image: Bridget
-    },
-    {
-        name: "Elena Mutasa",
-        location: "Parent Plus",
-         
-        title: "Clean transparency for my daughter's loans",
-        comment: "Was worried about Parent Plus terms, but the Nexus transparency protocol made everything clear. Zero hidden fees, just pure honesty.",
-        Image: Elena
-    },
-    {
-        name: "Jordan Muzeza",
-        location: "Debt Refinance",
-         
-        title: "Actually helped me save $100+ every month",
-        comment: "Autonomous fraud protection and clear savings. Swapping my car loan was the best financial decision I made this year.",
-        Image: Jordan
-    }
-];
+import { ShieldCheck, Eye, Zap, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'; 
+import { supabase } from '../supabaseClient'; 
 
 export default function TrustSection() {
     const scrollRef = useRef(null);
+    const [reviews, setReviews] = useState([]);
+    const [loading, setLoading] = useState(true);
 
+    // Fetch Reviews from Supabase
+    useEffect(() => {
+        const fetchReviews = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('reviews')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                if (data) setReviews(data);
+            } catch (error) {
+                console.error('Error loading reviews:', error.message);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchReviews();
+    }, []);
+
+    // Initialize AOS
     useEffect(() => {
         AOS.init({
             duration: 1000,
@@ -135,72 +130,72 @@ export default function TrustSection() {
                             <p className="text-gray-500 text-lg font-bold uppercase tracking-widest">Active Community Stories</p>
                         </div>
 
-                        {/* Desktop Slider Controls */}
+                        {/* Slider Controls */}
                         <div className="hidden lg:flex justify-between absolute top-[60%] -translate-y-1/2 w-full left-0 z-10 pointer-events-none px-8">
-                            <button 
-                                onClick={() => scroll('left')} 
-                                className="p-4 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/slider:opacity-100"
-                            >
+                            <button onClick={() => scroll('left')} className="p-4 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/slider:opacity-100">
                                 <ChevronLeft size={28} />
                             </button>
-                            <button 
-                                onClick={() => scroll('right')} 
-                                className="p-4 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/slider:opacity-100"
-                            >
+                            <button onClick={() => scroll('right')} className="p-4 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/slider:opacity-100">
                                 <ChevronRight size={28} />
                             </button>
                         </div>
 
-                        <div 
-                            ref={scrollRef}
-                            className="flex overflow-x-auto lg:grid lg:grid-cols-3 gap-8 pb-8 md:pb-0 snap-x snap-mandatory no-scrollbar"
-                        >
-                            {socialFeed.map((post, index) => (
-                                <div 
-                                    key={index} 
-                                    data-aos="fade-up"
-                                    data-aos-delay={index * 200}
-                                    className="min-w-[85%] lg:min-w-0 snap-center bg-white p-8 rounded-[2.5rem] border-2 border-transparent hover:border-cyan-400 transition-all duration-300 group shadow-sm hover:shadow-xl flex flex-col h-full"
-                                >
-                                    <div className="flex justify-between items-center mb-6">
-                                        <div className="flex gap-0.5 text-green-500">
-                                            {[...Array(5)].map((_, i) => (
-                                                <svg key={i} className="w-5 h-5 fill-current" viewBox="0 0 20 20">
-                                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                                                </svg>
-                                            ))}
-                                        </div>
-                                        <div className="flex items-center gap-1.5 text-gray-500 bg-gray-50 px-3 py-1 rounded-full text-xs font-bold border border-gray-100">
-                                            <svg className="w-3.5 h-3.5 fill-cyan-500" viewBox="0 0 20 20">
-                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                            </svg>
-                                            Invited
-                                        </div>
-                                    </div>
-
-                                    <h4 className="font-extrabold text-[#0B1E3D] text-lg mb-3 leading-tight">{post.title}</h4>
-                                    <p className="text-[#0B1E3D]/80 text-base leading-relaxed font-semibold mb-10 flex-grow">
-                                        "{post.comment}"
-                                    </p>
-
-                                    <div className="flex items-center gap-4 pt-6 border-t border-gray-50 mt-auto">
-                                        <div className="w-14 h-14 rounded-full overflow-hidden group-hover:rotate-6 transition-transform">
-                                            <img 
-                                                src={post.Image} 
-                                                alt={post.name} 
-                                                className="w-full h-full object-cover"
-                                            />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-extrabold text-[#0B1E3D] text-lg leading-tight">{post.name}</h4>
-                                            <p className="text-cyan-600 text-sm font-bold flex gap-2">
-                                                <span>{post.location}</span>
-                                                <span>{post.time}</span>
-                                            </p>
-                                        </div>
-                                    </div>
+                        <div ref={scrollRef} className="flex overflow-x-auto lg:grid lg:grid-cols-3 gap-8 pb-8 md:pb-0 snap-x snap-mandatory no-scrollbar min-h-[400px]">
+                            {loading ? (
+                                <div className="col-span-3 flex flex-col items-center justify-center py-20 gap-4">
+                                    <Loader2 className="w-10 h-10 text-cyan-500 animate-spin" />
+                                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Syncing Community Feed...</p>
                                 </div>
-                            ))}
+                            ) : (
+                                reviews.map((post, index) => (
+                                    <div 
+                                        key={post.id || index} 
+                                        data-aos="fade-up"
+                                        data-aos-delay={index * 150}
+                                        className="min-w-[85%] lg:min-w-0 snap-center bg-white p-8 rounded-[2.5rem] border-2 border-transparent hover:border-cyan-400 transition-all duration-300 group shadow-sm hover:shadow-xl flex flex-col h-full"
+                                    >
+                                        <div className="flex justify-between items-center mb-6">
+                                            <div className="flex gap-0.5 text-green-500">
+                                                {[...Array(5)].map((_, i) => (
+                                                    <svg key={i} className="w-5 h-5 fill-current" viewBox="0 0 20 20">
+                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                    </svg>
+                                                ))}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 text-gray-500 bg-gray-50 px-3 py-1 rounded-full text-xs font-bold border border-gray-100">
+                                                <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse"></div>
+                                                Verified Member
+                                            </div>
+                                        </div>
+
+                                        {/* FETCHING HEADLINE: Checks for 'headline' first, then 'title' */}
+                                        <h4 className="font-extrabold text-[#0B1E3D] text-lg mb-3 leading-tight">
+                                            {post.headline || post.title || "Nexus Story"}
+                                        </h4>
+                                        
+                                        <p className="text-[#0B1E3D]/80 text-base leading-relaxed font-semibold mb-10 flex-grow">
+                                            "{post.review_text || post.comment}"
+                                        </p>
+
+                                        <div className="flex items-center gap-4 pt-6 border-t border-gray-50 mt-auto">
+                                            <div className="w-14 h-14 rounded-full overflow-hidden group-hover:rotate-6 transition-transform border-2 border-cyan-50">
+                                                <img 
+                                                    src={post.image_url || post.Image || 'https://via.placeholder.com/150'} 
+                                                    alt={post.name} 
+                                                    className="w-full h-full object-cover"
+                                                    onError={(e) => { e.target.src = 'https://via.placeholder.com/150' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-extrabold text-[#0B1E3D] text-lg leading-tight">{post.name}</h4>
+                                                <p className="text-cyan-600 text-sm font-bold">
+                                                    {post.location || post.role}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 </div>

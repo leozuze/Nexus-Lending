@@ -1,15 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
     ShieldCheck, Cpu, Zap, Lock, CheckCircle, BarChart3, 
-    CreditCard, Users, Globe, ChevronLeft, ChevronRight, XCircle
+    CreditCard, Users, Globe, ChevronLeft, ChevronRight, XCircle, Loader2 
 } from 'lucide-react';
+import { supabase } from '../supabaseClient'; 
 
 // Assets
 import whyImage from '../assets/whynexus.jpg'; 
-import Bridget from '../assets/student.jpg';
-import Elena from '../assets/woman.jpg';
-import Jordan from '../assets/father.jpg';
 
 export default function WhyNexusLinks() {
     const location = useLocation();
@@ -18,6 +16,31 @@ export default function WhyNexusLinks() {
     const advantageRef = useRef(null);
     const storiesRef = useRef(null);
 
+    // Dynamic State for Reviews
+    const [stories, setStories] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchStories = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('reviews')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                if (data) setStories(data);
+            } catch (error) {
+                console.error('Error loading stories:', error.message);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchStories();
+    }, []);
+
+    // Smooth Scroll Logic
     useEffect(() => {
         if (hash) {
             const timeoutId = setTimeout(() => {
@@ -53,12 +76,6 @@ export default function WhyNexusLinks() {
         { feature: "Data Points Used", nexus: "10,000+ (Alt Data)", banks: "1 (FICO Only)" },
         { feature: "Hidden Fees", nexus: "Zero Transparency", banks: "Origination Fees" },
         { feature: "Security", nexus: "Biometric & AES-256", banks: "Legacy Systems" },
-    ];
-
-    const stories = [
-        { name: "Bridget Kwenda", role: "MBA Borrower", text: "Nexus made it happen when others couldn't. Found a rate 1.5% lower than my local bank.", image: Bridget },
-        { name: "Elena Mutasa", role: "Parent Plus", text: "The Nexus transparency protocol made everything clear. Zero hidden fees, just pure honesty.", image: Elena },
-        { name: "Jordan Muzeza", role: "Debt Refinance", text: "Autonomous fraud protection and clear savings. Swapping my loan was the best decision.", image: Jordan }
     ];
 
     return (
@@ -129,7 +146,7 @@ export default function WhyNexusLinks() {
                         <p className="text-slate-600 mb-8 leading-relaxed text-lg">We look at income stability and professional growth to offer lower rates to responsible borrowers.</p>
                         <div className="flex gap-8 md:gap-12 border-t border-slate-200 pt-8">
                             <div className="flex items-center gap-3"><Users className="text-cyan-500" /><div><p className="text-2xl font-black text-[#0B1E3D]">120k+</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Active Users</p></div></div>
-                            <div className="flex items-center gap-3"><Globe className="text-cyan-500" /><div><p className="text-2xl font-black text-[#0B1E3D]">Harare</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Hub Location</p></div></div>
+                            <div className="flex items-center gap-3"><Globe className="text-cyan-500" /><div><p className="text-2xl font-black text-[#0B1E3D]">Global</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Network</p></div></div>
                         </div>
                     </div>
                 </div>
@@ -157,14 +174,13 @@ export default function WhyNexusLinks() {
                     </div>
                 </div>
 
-                {/* NEXUS VS OTHERS - UPDATED FOR MOBILE COMPATIBILITY */}
+                {/* COMPARISON TABLE */}
                 <div id="comparison" className="mb-32 scroll-mt-32">
                     <div className="text-center mb-12">
                         <h2 className="text-3xl md:text-4xl font-black text-[#0B1E3D] mb-4">Nexus vs. The Rest</h2>
                         <p className="text-slate-500 px-4">Why thousands are switching from traditional banking.</p>
                     </div>
                     
-                    {/* Desktop Table View */}
                     <div className="hidden md:block overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white shadow-xl">
                         <table className="w-full text-left border-collapse">
                             <thead>
@@ -196,7 +212,7 @@ export default function WhyNexusLinks() {
                         </table>
                     </div>
 
-                    {/* Mobile Card View (Vertical Stack) */}
+                    {/* MOBILE COMPARISON */}
                     <div className="md:hidden space-y-4 px-2">
                         {comparisonData.map((row, i) => (
                             <div key={i} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -225,27 +241,45 @@ export default function WhyNexusLinks() {
                 {/* STORIES SECTION */}
                 <div id="stories" className="text-center mb-32 scroll-mt-32 group/stories">
                     <h2 className="text-3xl md:text-4xl font-black text-[#0B1E3D] mb-12">Built for Real Success.</h2>
-                    <div className="relative">
-                        <div className="hidden md:flex justify-between absolute top-1/2 -translate-y-1/2 w-full z-10 pointer-events-none">
-                            <button onClick={() => scroll(storiesRef, 'left')} className="p-3 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto -ml-6 hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/stories:opacity-100"><ChevronLeft /></button>
-                            <button onClick={() => scroll(storiesRef, 'right')} className="p-3 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto -mr-6 hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/stories:opacity-100"><ChevronRight /></button>
-                        </div>
-                        <div ref={storiesRef} className="flex overflow-x-auto snap-x snap-mandatory gap-8 no-scrollbar pb-6">
-                            {stories.map((story, i) => (
-                                <div key={i} className="snap-center shrink-0 w-[85%] md:w-[calc(50%-16px)] lg:w-[calc(33.33%-22px)] p-8 bg-white rounded-3xl border border-slate-200 text-left hover:shadow-xl transition-shadow flex flex-col justify-between">
-                                    <div>
-                                        <div className="w-12 h-12 rounded-full overflow-hidden mb-6 border-2 border-cyan-100">
-                                            <img src={story.image} alt={story.name} className="w-full h-full object-cover" />
-                                        </div>
-                                        <p className="text-slate-500 italic mb-6 text-sm md:text-base">"{story.text}"</p>
-                                    </div>
-                                    <div>
-                                        <h4 className="font-bold text-[#0B1E3D]">{story.name}</h4>
-                                        <p className="text-xs text-cyan-600 font-bold uppercase tracking-tighter">{story.role}</p>
-                                    </div>
+                    <div className="relative min-h-[300px] flex items-center justify-center">
+                        {loading ? (
+                            <div className="flex flex-col items-center gap-4">
+                                <Loader2 className="w-12 h-12 text-cyan-500 animate-spin" />
+                                <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Fetching Community Stories...</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="hidden md:flex justify-between absolute top-1/2 -translate-y-1/2 w-full z-10 pointer-events-none">
+                                    <button onClick={() => scroll(storiesRef, 'left')} className="p-3 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto -ml-6 hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/stories:opacity-100"><ChevronLeft /></button>
+                                    <button onClick={() => scroll(storiesRef, 'right')} className="p-3 rounded-full bg-white shadow-xl border border-slate-100 pointer-events-auto -mr-6 hover:bg-cyan-500 hover:text-white transition-all opacity-0 group-hover/stories:opacity-100"><ChevronRight /></button>
                                 </div>
-                            ))}
-                        </div>
+                                <div ref={storiesRef} className="flex overflow-x-auto snap-x snap-mandatory gap-8 no-scrollbar pb-6 w-full">
+                                    {stories.map((story) => (
+                                        <div key={story.id} className="snap-center shrink-0 w-[85%] md:w-[calc(50%-16px)] lg:w-[calc(33.33%-22px)] p-8 bg-white rounded-3xl border border-slate-200 text-left hover:shadow-xl transition-shadow flex flex-col justify-between">
+                                            <div>
+                                                <div className="w-12 h-12 rounded-full overflow-hidden mb-6 border-2 border-cyan-100 shadow-sm">
+                                                    <img 
+                                                        src={story.image_url || 'https://via.placeholder.com/150'} 
+                                                        alt={story.name} 
+                                                        className="w-full h-full object-cover" 
+                                                        onError={(e) => { e.target.src = 'https://via.placeholder.com/150' }}
+                                                    />
+                                                </div>
+                                                <p className="text-slate-500 italic mb-6 text-sm md:text-base leading-relaxed">
+                                                    "{story.review_text}"
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-[#0B1E3D]">{story.name}</h4>
+                                                <p className="text-xs text-cyan-600 font-bold uppercase tracking-tighter">
+                                                    {story.role}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
