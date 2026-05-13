@@ -24,4 +24,3 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: false,
   },
 });
-//supabase database password  zYEHhnCXEb4hxS82

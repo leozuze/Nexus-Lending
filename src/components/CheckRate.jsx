@@ -61,25 +61,35 @@ export default function CheckRate() {
   const preSelectedPurpose = location.state?.purpose || '';
   const preSelectedSubType = location.state?.subType || '';
 
-  // ── Auth state — know if user is logged in ───────────────────────────────
-  const [loggedInUser, setLoggedInUser] = useState(undefined); // undefined = still loading
+  // ── Auth state ───────────────────────────────────────────────────────────
+  // FIX: Start as `undefined` (loading) and only transition to null (logged out)
+  // or a user object (logged in) once Firebase resolves. This prevents the
+  // brief flicker where a logged-in user sees the guest flow (isLoggedIn=false)
+  // for one render before onAuthStateChanged fires.
+  // We hold step=0 (BotShield) until auth resolves so the form never renders
+  // with the wrong guest/logged-in assumption.
+  const [loggedInUser, setLoggedInUser] = useState(undefined); // undefined = loading
+  const [authReady, setAuthReady]       = useState(false);
+
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setLoggedInUser(u ?? null));
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setLoggedInUser(u ?? null);
+      setAuthReady(true);
+    });
     return () => unsub();
   }, []);
 
   const isLoggedIn = !!loggedInUser;
 
-  // ── Steps:
-  // Guest:       0 (BotShield) → 1 → 2 → 3 → 4 → 5 → 6 → submit → /signup
-  // Logged-in:   0 (BotShield) → 1 → submit directly → /dashboard
-  // ────────────────────────────────────────────────────────────────────────
-  const [step, setStep]               = useState(0);
+  // ── Steps ────────────────────────────────────────────────────────────────
+  // Guest:      0 (BotShield) → 1 → 2 → 3 → 4 → 5 → 6 → submit → /signup
+  // Logged-in:  0 (BotShield) → 1 → submit directly → /dashboard
+  const [step, setStep]                 = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [submitError, setSubmitError] = useState('');
-  const [errors, setErrors]           = useState({});
-  const [estPayment, setEstPayment]   = useState(0);
-  const [currentAPR, setCurrentAPR]   = useState(loanRates.default);
+  const [submitError, setSubmitError]   = useState('');
+  const [errors, setErrors]             = useState({});
+  const [estPayment, setEstPayment]     = useState(0);
+  const [currentAPR, setCurrentAPR]     = useState(loanRates.default);
 
   const [formData, setFormData] = useState({
     amount:      location.state?.amount || loanRanges[preSelectedPurpose]?.min || 5000,
@@ -111,7 +121,7 @@ export default function CheckRate() {
   }, [preSelectedPurpose, preSelectedSubType, location.state?.amount]);
 
   useEffect(() => {
-    const P   = parseFloat(formData.amount);
+    const P    = parseFloat(formData.amount);
     const rate = loanRates[formData.subType] || loanRates.default;
     setCurrentAPR(rate);
     setEstPayment(calcMonthly(P, rate, formData.term).toFixed(2));
@@ -150,7 +160,6 @@ export default function CheckRate() {
       if (!formData.amount || Number(formData.amount) < range.min) e.amount = `Min $${range.min}`;
       else if (Number(formData.amount) > range.max) e.amount = `Max $${range.max}`;
     }
-    // Guest-only step validation
     if (!isLoggedIn) {
       if (s === 2) {
         if (formData.fullName.trim().split(' ').length < 2) e.fullName = 'Legal Name Required';
@@ -194,10 +203,9 @@ export default function CheckRate() {
 
       const userId = loggedInUser?.uid ?? null;
 
-      // ── For logged-in users, pull their profile from Supabase ──────────
+      // Pull logged-in user's profile from Supabase
       let applicantName  = formData.fullName;
       let applicantEmail = formData.email;
-      let applicantPhone = formData.phone;
 
       if (userId) {
         const { data: profile } = await supabase
@@ -242,7 +250,7 @@ export default function CheckRate() {
 
       if (error) throw error;
 
-      // ── Update user stats if logged in ──────────────────────────────────
+      // Logged-in: update stats + send notification → dashboard
       if (userId) {
         const { data: userData } = await supabase
           .from('users')
@@ -266,17 +274,37 @@ export default function CheckRate() {
 
         setIsProcessing(false);
         navigate('/dashboard', { state: { newApplication: data.id } });
+
       } else {
-        // ── Guest: redirect to SIGNUP (not login) with context message ───
-        // They've already submitted — now they just need an account to track it.
+        // ── Guest post-submit ─────────────────────────────────────────────
+        // Check if the email they entered already has a Nexus account.
+        // If yes  → send them to /login  (they just need to sign in to see it)
+        // If no   → send them to /signup (they need to create an account first)
         setIsProcessing(false);
-        navigate('/signup', {
-          state: {
-            message:         'Your application was submitted! Create an account to track it and manage your loan.',
-            applicationId:   data.id,
-            prefillEmail:    formData.email,
-          }
-        });
+
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .eq('email', formData.email.trim().toLowerCase())
+          .maybeSingle();
+
+        if (existingUser) {
+          // Already has an account — just log in to track the application
+          navigate('/login', {
+            state: {
+              message: 'Application submitted! Log in to track it in your dashboard.',
+            }
+          });
+        } else {
+          // New user — create account to claim and track the application
+          navigate('/signup', {
+            state: {
+              message:       'Your application was submitted! Create an account to track it and manage your loan.',
+              applicationId: data.id,
+              prefillEmail:  formData.email,
+            }
+          });
+        }
       }
 
     } catch (err) {
@@ -286,7 +314,6 @@ export default function CheckRate() {
     }
   };
 
-  // ── Total steps depends on auth state ───────────────────────────────────
   const totalSteps = isLoggedIn ? 1 : 6;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -314,7 +341,9 @@ export default function CheckRate() {
     );
   }
 
-  if (step === 0) return <BotShield onVerified={handleVerify} />;
+  // Hold BotShield until Firebase auth resolves — prevents rendering the form
+  // with the wrong guest/logged-in state on first load
+  if (step === 0 || !authReady) return <BotShield onVerified={handleVerify} />;
 
   return (
     <div className="min-h-screen flex flex-col font-sans antialiased bg-gray-50 overflow-x-hidden">
@@ -334,7 +363,7 @@ export default function CheckRate() {
                 <div className="text-right">
                   <span className="text-[10px] font-black text-gray-300 uppercase">Step {step}/{totalSteps}</span>
                   {isLoggedIn && (
-                    <p className="text-[9px] text-cyan-500 font-bold mt-0.5">Logged in — fast track ⚡</p>
+                    <p className="text-[9px] text-cyan-500 font-bold mt-0.5">Logged in fast track </p>
                   )}
                 </div>
               </div>
@@ -352,7 +381,7 @@ export default function CheckRate() {
                     <div>
                       <p className="text-xs font-black text-cyan-800">You're signed in</p>
                       <p className="text-[10px] text-cyan-600 mt-0.5">
-                        Your profile details are on file. Just pick your loan details and submit — we'll handle the rest.
+                        Your profile details are on file. Just pick your loan details and submit we'll handle the rest.
                       </p>
                     </div>
                   </div>
@@ -558,13 +587,13 @@ export default function CheckRate() {
                     </button>
                   )}
 
-                  {/* Logged-in user: Step 1 → Submit directly */}
+                  {/* Logged-in: Step 1 → Submit directly */}
                   {isLoggedIn && step === 1 && (
                     <button
                       type="button" onClick={handleSubmit}
                       className="w-full sm:flex-[2] py-4 font-black rounded-2xl uppercase text-[10px] tracking-widest bg-cyan-500 text-white order-1 sm:order-2 hover:bg-[#0B1E3D] transition-colors"
                     >
-                      Submit Application ⚡
+                      Submit Application
                     </button>
                   )}
 

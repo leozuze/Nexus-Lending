@@ -1,28 +1,50 @@
 import React, { useState, useEffect } from 'react'; 
 import { Link, useLocation } from 'react-router-dom'; 
-import { Target, Shield, Globe, Heart, ChevronDown, Rocket, Newspaper, Calendar, ArrowRight, Users, Briefcase, X } from 'lucide-react'; // Added X for closing modal
+import { Target, Shield, Globe, Heart, ChevronDown, Rocket, Newspaper, Calendar, ArrowRight, Users, Briefcase, X, Tag } from 'lucide-react';
+import { supabase } from '../supabaseClient'; 
 
 // Assets
 import companyImg from '../assets/company.jpg';
-import dataImg from '../assets/data.jpg';
 import founderImg from '../assets/founder.jpg';
 import ceoImg from '../assets/ceo.jpg';
 import managerImg from '../assets/manager.jpg';
-import personalLoanImg from '../assets/data.jpg'; 
-import businessLoanImg from '../assets/company.jpg';
-
-// New Assets
-import cbdImg from '../assets/cbd.jpg';
 import techImg from '../assets/tech.jpg';
-import teamImg from '../assets/team.jpg';
-import studentImg from '../assets/happystudent.jpg';
-import worldImg from '../assets/world.jpg';
 
 export default function AboutUsLinks() {
     const [openFaq, setOpenFaq] = useState(null);
-    const [selectedBlog, setSelectedBlog] = useState(null); // Added for the News Modal
+    const [selectedBlog, setSelectedBlog] = useState(null);
+    const [newsBlogs, setNewsBlogs] = useState([]); 
+    const [careerInnovation, setCareerInnovation] = useState(null); // State for Careers section
+    const [categories, setCategories] = useState([]); 
     const { hash } = useLocation(); 
 
+    // Fetch Content from Supabase
+    useEffect(() => {
+        async function fetchData() {
+            // 1. Fetch Categories first to map names to IDs if necessary
+            const { data: catData } = await supabase.from('categories').select('*');
+            setCategories(catData || []);
+
+            // 2. Fetch Blogs and Filter by Category
+            const { data: blogData, error: blogError } = await supabase
+                .from('blogs')
+                .select('*')
+                .order('created_at', { ascending: false });
+            
+            if (!blogError && blogData) {
+                // Filter news for the top slider
+                const news = blogData.filter(b => b.category?.toLowerCase() === 'news');
+                setNewsBlogs(news);
+
+                // Filter for Career Innovation (taking the latest one)
+                const career = blogData.find(b => b.category?.toLowerCase() === 'career innovation');
+                setCareerInnovation(career);
+            }
+        }
+        fetchData();
+    }, []);
+
+    // Handle Hash Scrolling
     useEffect(() => {
         if (hash) {
             const element = document.getElementById(hash.replace('#', ''));
@@ -40,56 +62,17 @@ export default function AboutUsLinks() {
         { name: "David Mapfuudze", role: "Operations Manager", img: ceoImg }
     ];
 
-    const blogs = [
-        { 
-            title: "Harare CBD Milestone: Nexus Expansion", 
-            date: "April 20, 2026", 
-            img: cbdImg, 
-            desc: "Nexus officially opens its physical verification hub in the heart of Harare to support local merchants. This move marks a significant step in our commitment to physical accessibility for our business partners.",
-            fullInfo: "Our new hub in the Harare CBD is designed to provide face-to-face support for merchants and entrepreneurs. This center features dedicated AI consulting stations where business owners can learn how to leverage our credit engine to scale their operations. We believe that while digital is the future, local presence builds the trust necessary for a thriving financial ecosystem."
-        },
-        { 
-            title: "The Tech Stack Behind the Engine", 
-            date: "April 15, 2026", 
-            img: techImg, 
-            desc: "An inside look at our proprietary AI credit scoring model and the security layers protecting user data.",
-            fullInfo: "At Nexus, we utilize a multi-layered security architecture. Our proprietary AI model analyzes over 500 non-traditional data points to determine creditworthiness without relying on outdated banking history. Everything is protected by bank-grade AES-256 encryption and monitored 24/7 by our security operations center." 
-        },
-        { 
-            title: "Inside the Nexus Innovation Lab", 
-            date: "April 05, 2026", 
-            img: companyImg, 
-            desc: "How our high-tech office environment fosters the next generation of African fintech solutions.",
-            fullInfo: "Our Innovation Lab is where the magic happens. We've created an open-collaboration space in Harare where engineers, data scientists, and financial experts work side-by-side. This environment has reduced our feature deployment cycle by 40%, allowing us to respond to user needs in near real-time."
-        },
-        { 
-            title: "Collaboration: Our Secret Weapon", 
-            date: "March 22, 2026", 
-            img: teamImg, 
-            desc: "Our engineering and operations teams working in sync to reduce loan approval times to under 24 hours.",
-            fullInfo: "Syncing technical development with on-the-ground operations is key. By automating the verification pipeline and integrating real-time KYC (Know Your Customer) checks, our team has achieved an industry-leading approval speed. This ensures that capital is available exactly when our users need it most."
-        },
-        { 
-            title: "Student Success: Breaking the Barrier", 
-            date: "March 10, 2026", 
-            img: studentImg, 
-            desc: "Meet Tinashe, the university student who used Nexus to fund his final year project and launch a startup.",
-            fullInfo: "Tinashe's journey represents the core of our mission. Unable to secure traditional funding, he used the Nexus micro-credit line to purchase specialized hardware for his Final Year Project. Today, that project has evolved into a registered tech startup, proving that accessible credit can jumpstart careers."
-        },
-        { 
-            title: "A Global Vision from Local Roots", 
-            date: "Feb 28, 2026", 
-            img: worldImg, 
-            desc: "Mapping the journey of Nexus as we prepare to scale our democratized credit model to international markets.",
-            fullInfo: "While we are rooted in Zimbabwe, the problems we solve are global. We are currently auditing our algorithms for cross-border compliance as we prepare to expand into neighboring SADC regions. Our goal is to create a unified credit standard for the modern African professional."
-        }
-    ];
-
     const aboutFaqs = [
         { q: "Why did you start in Harare?", a: "We saw that local brilliance was being held back by outdated paperwork. We wanted to build a solution from home, for home." },
         { q: "Are you a bank?", a: "We are an AI-first fintech partner. We work alongside the financial ecosystem to provide faster access to capital." },
         { q: "How do you protect my data?", a: "We use bank-grade AES-256 encryption. Your 'Financial DNA' is seen by our AI, but never sold to third parties." }
     ];
+
+    const formatDate = (dateString) => {
+        return new Date(dateString).toLocaleDateString('en-US', {
+            month: 'long', day: 'numeric', year: 'numeric'
+        });
+    };
 
     return (
         <div className="pt-32 pb-20 bg-white font-sans selection:bg-cyan-100 scroll-smooth">
@@ -125,7 +108,7 @@ export default function AboutUsLinks() {
                     </div>
                 </div>
 
-                {/* Section 2: News / Blogs */}
+                {/* Section 2: News / Blogs (FILTERED) */}
                 <div id="press" className="mb-32 scroll-mt-32">
                     <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-4">
                         <div>
@@ -140,49 +123,47 @@ export default function AboutUsLinks() {
                     </div>
                     
                     <div className="flex overflow-x-auto pb-8 gap-8 no-scrollbar snap-x snap-mandatory">
-                        {blogs.map((blog, i) => (
-                            <div key={i} onClick={() => setSelectedBlog(blog)} className="min-w-[300px] md:min-w-[400px] snap-start group cursor-pointer">
+                        {newsBlogs.length > 0 ? newsBlogs.map((blog) => (
+                            <div key={blog.id} onClick={() => setSelectedBlog(blog)} className="min-w-[300px] md:min-w-[400px] snap-start group cursor-pointer">
                                 <div className="overflow-hidden rounded-[2rem] mb-6 shadow-md border border-slate-100">
-                                    <img src={blog.img} alt={blog.title} className="w-full h-56 object-cover group-hover:scale-110 transition-transform duration-700" />
+                                    <img src={blog.img_url} alt={blog.title} className="w-full h-56 object-cover group-hover:scale-110 transition-transform duration-700" />
                                 </div>
-                                <div className="flex items-center gap-2 text-cyan-600 font-bold text-[10px] mb-3 uppercase tracking-widest">
-                                    <Calendar size={12} /> {blog.date}
+                                <div className="flex items-center gap-4 text-cyan-600 font-bold text-[10px] mb-3 uppercase tracking-widest">
+                                    <span className="flex items-center gap-1"><Calendar size={12} /> {formatDate(blog.created_at)}</span>
+                                    <span className="flex items-center gap-1 bg-cyan-50 px-2 py-0.5 rounded text-cyan-500"><Tag size={10} /> {blog.category}</span>
                                 </div>
                                 <h3 className="text-xl font-bold text-[#0B1E3D] mb-3 group-hover:text-cyan-500 transition-colors leading-tight line-clamp-1">{blog.title}</h3>
-                                <p className="text-slate-500 text-sm line-clamp-2">{blog.desc}</p>
+                                <p className="text-slate-500 text-sm line-clamp-2">{blog.description}</p>
                             </div>
-                        ))}
+                        )) : (
+                            <p className="text-slate-400 italic">No recent news available.</p>
+                        )}
                     </div>
                 </div>
 
-                {/* News Modal - ONLY SHOWS WHEN A BLOG IS CLICKED */}
+                {/* News Modal */}
                 {selectedBlog && (
                     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
                         <div className="bg-white rounded-[3rem] max-w-4xl w-full max-h-[90vh] overflow-y-auto relative shadow-2xl">
-                            <button 
-                                onClick={() => setSelectedBlog(null)}
-                                className="absolute top-6 right-6 p-3 bg-slate-100 hover:bg-cyan-500 hover:text-white text-slate-500 rounded-full transition-all z-20"
-                            >
+                            <button onClick={() => setSelectedBlog(null)} className="absolute top-6 right-6 p-3 bg-slate-100 hover:bg-cyan-500 hover:text-white text-slate-500 rounded-full transition-all z-20">
                                 <X size={24} />
                             </button>
-                            
                             <div className="grid md:grid-cols-2">
                                 <div className="h-[300px] md:h-full">
-                                    <img src={selectedBlog.img} alt={selectedBlog.title} className="w-full h-full object-cover" />
+                                    <img src={selectedBlog.img_url} alt={selectedBlog.title} className="w-full h-full object-cover" />
                                 </div>
                                 <div className="p-8 md:p-12">
                                     <div className="inline-flex items-center gap-2 text-cyan-600 font-bold text-xs uppercase tracking-widest mb-4">
-                                        <Calendar size={14} /> {selectedBlog.date}
+                                        <Calendar size={14} /> {formatDate(selectedBlog.created_at)}
+                                        <span className="ml-2 text-slate-400">|</span>
+                                        <span className="ml-2">{selectedBlog.category}</span>
                                     </div>
                                     <h2 className="text-3xl font-black text-[#0B1E3D] mb-6 leading-tight">{selectedBlog.title}</h2>
                                     <div className="space-y-4">
-                                        <p className="text-slate-600 font-bold leading-relaxed">{selectedBlog.desc}</p>
-                                        <p className="text-slate-500 leading-relaxed">{selectedBlog.fullInfo}</p>
+                                        <p className="text-slate-600 font-bold leading-relaxed">{selectedBlog.description}</p>
+                                        <p className="text-slate-500 leading-relaxed">{selectedBlog.full_info}</p>
                                     </div>
-                                    <button 
-                                        onClick={() => setSelectedBlog(null)}
-                                        className="mt-8 px-8 py-3 bg-[#0B1E3D] text-white rounded-full font-bold hover:bg-cyan-600 transition-colors"
-                                    >
+                                    <button onClick={() => setSelectedBlog(null)} className="mt-8 px-8 py-3 bg-[#0B1E3D] text-white rounded-full font-bold hover:bg-cyan-600 transition-colors">
                                         Close Story
                                     </button>
                                 </div>
@@ -191,20 +172,27 @@ export default function AboutUsLinks() {
                     </div>
                 )}
 
-                {/* Section: Careers */}
+                {/* Section: Careers (DYNAMICALLY FETCHED) */}
                 <div id="careers" className="mb-32 scroll-mt-32">
                     <div className="grid lg:grid-cols-2 gap-12 items-center">
                         <div className="order-2 lg:order-1">
-                            <img src={techImg} alt="Development" className="rounded-[2.5rem] shadow-xl h-[400px] w-full object-cover" />
+                            <img src={careerInnovation?.img_url || techImg} alt="Career Innovation" className="rounded-[2.5rem] shadow-xl h-[400px] w-full object-cover" />
                         </div>
                         <div className="order-1 lg:order-2">
                             <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-sm font-bold mb-6">
                                 <Briefcase size={16} /> CAREER & INNOVATION
                             </div>
-                            <h2 className="text-4xl font-black text-[#0B1E3D] mb-6">Bridging Academic Excellence with Professional AI</h2>
+                            <h2 className="text-4xl font-black text-[#0B1E3D] mb-6">
+                                {careerInnovation?.title || "Bridging Academic Excellence with Professional AI"}
+                            </h2>
                             <p className="text-slate-500 text-lg leading-relaxed mb-6">
-                                Our development philosophy stems from a deep foundation in Artificial Intelligence and Fullstack engineering. By integrating specialized BTech insights with freelance web expertise, we build systems that aren't just functional, but intelligently responsive.
+                                {careerInnovation?.description || "Our development philosophy stems from a deep foundation in Artificial Intelligence and Fullstack engineering."}
                             </p>
+                            {careerInnovation?.full_info && (
+                                <div className="p-4 bg-slate-50 rounded-2xl mb-6 text-slate-600 text-sm">
+                                    {careerInnovation.full_info}
+                                </div>
+                            )}
                             <ul className="space-y-4">
                                 <li className="flex items-start gap-3">
                                     <div className="mt-1 bg-cyan-100 p-1 rounded-md text-cyan-600 font-bold">✓</div>
@@ -228,7 +216,7 @@ export default function AboutUsLinks() {
                             </div>
                             <h2 className="text-4xl font-black mb-6">Building the Future</h2>
                             <p className="text-slate-400 text-lg mb-8 leading-relaxed">
-                                We aren't building in a vacuum. Nexus is actively collaborating with Harare's innovation hubs to ensure our AI models align with local standards and financial inclusion goals.
+                                We aren't building in a vacuum. Nexus is actively collaborating with Harare's innovation hubs to ensure our AI models align with local standards.
                             </p>
                             <Link to="/contact" className="inline-block bg-white text-slate-900 px-8 py-3 rounded-2xl font-bold hover:bg-cyan-500 hover:text-white transition-all">Connect to Hub</Link>
                         </div>
@@ -239,18 +227,17 @@ export default function AboutUsLinks() {
                             </div>
                             <div className="p-8 bg-white/5 rounded-3xl border border-white/10 hover:border-cyan-500/50 transition-colors">
                                 <h4 className="font-bold text-xl mb-2 text-cyan-400">Regulatory Roadmap</h4>
-                                <p className="text-slate-400 text-sm">Working within the framework of the RBZ Fintech Sandbox for bank-grade security protocols.</p>
+                                <p className="text-slate-400 text-sm">Working within the framework of the RBZ Fintech Sandbox.</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Section 4: Leadership */}
+                {/* Leadership and FAQ remain the same... */}
                 <div id="leadership" className="mb-32 scroll-mt-32">
                     <div className="text-center md:text-left mb-16">
                         <h2 className="text-4xl font-black text-[#0B1E3D]">The People Behind the Code</h2>
                     </div>
-                    
                     <div className="flex overflow-x-auto md:grid md:grid-cols-3 pb-8 gap-12 no-scrollbar snap-x snap-mandatory">
                         {team.map((member, i) => (
                             <div key={i} className="min-w-[280px] md:min-w-0 snap-center group text-center">
@@ -285,7 +272,6 @@ export default function AboutUsLinks() {
                     </div>
                 </div>
 
-                {/* Final CTA */}
                 <div className="bg-[#0B1E3D] rounded-[2.5rem] p-12 text-center relative overflow-hidden border border-white/10">
                     <h3 className="text-3xl font-black text-white mb-8 relative z-10">Let's build your future together.</h3>
                     <Link to="/signup" className="relative z-10 inline-block bg-cyan-500 text-white px-10 py-4 rounded-full font-bold hover:shadow-2xl transition-all">Get Started</Link>

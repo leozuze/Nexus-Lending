@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { auth, googleProvider } from '../firebase';
 import {
@@ -33,29 +33,9 @@ const EyeClosed = () => (
 );
 
 // ─────────────────────────────────────────────
-// Helper: verify uid exists in Supabase users table.
-// Throws on network/DB error so callers can handle it — never silently
-// returns false when the DB is unreachable (that would block real users).
+// Helpers
 // ─────────────────────────────────────────────
-const existsInDatabase = async (uid) => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('id')
-    .eq('id', uid)
-    .maybeSingle();
 
-  if (error) {
-    // Distinguish "not found" (PGRST116) from a real DB error
-    if (error.code === 'PGRST116') return false;
-    throw new Error('Unable to verify your account. Please try again.');
-  }
-
-  return !!data;
-};
-
-// ─────────────────────────────────────────────
-// Helper: human-readable Firebase error messages
-// ─────────────────────────────────────────────
 const firebaseErrorMessage = (code) => {
   switch (code) {
     case 'auth/invalid-credential':
@@ -74,6 +54,47 @@ const firebaseErrorMessage = (code) => {
   }
 };
 
+// Returns true if uid row exists, false if not, throws only on real DB errors
+const existsInDatabase = async (uid) => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', uid)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === 'PGRST116') return false;
+    throw new Error('Unable to verify your account. Please try again.');
+  }
+  return !!data;
+};
+
+// Creates a Supabase user record from a Google Firebase user object.
+// province is left empty — the user can fill it in Profile settings.
+// Ignores duplicate-key (23505) in case of concurrent calls.
+const createGoogleUserRecord = async (firebaseUser) => {
+  const { uid, email, displayName, photoURL } = firebaseUser;
+  const parts     = (displayName ?? '').trim().split(/\s+/);
+  const firstName = parts[0] || email.split('@')[0];
+  const lastName  = parts.slice(1).join(' ') || '';
+
+  const { error } = await supabase.from('users').insert({
+    id:                     uid,
+    email,
+    first_name:             firstName,
+    last_name:              lastName,
+    province:               '',           // user completes this in Profile
+    loan_application_count: 0,
+    created_at:             new Date().toISOString(),
+    last_login:             new Date().toISOString(),
+  });
+
+  // 23505 = unique_violation — row already exists, that's fine
+  if (error && error.code !== '23505') {
+    throw new Error('Failed to create your account record. Please try again.');
+  }
+};
+
 // ─────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────
@@ -86,39 +107,28 @@ export default function LogIn() {
   const [showShield, setShowShield]     = useState(false);
   const [error, setError]               = useState('');
 
-  const navigate  = useNavigate();
-  const location  = useLocation();
-
+  const navigate = useNavigate();
+  const location = useLocation();
   const redirectMessage = location.state?.message ?? null;
 
+  // Prevents the redirect-result useEffect from running concurrently
+  // with an active popup flow
+  const popupInProgressRef = useRef(false);
+
   // ── Handle Google redirect result on page load ───────────────────────────
-  // signInWithRedirect (our COOP-safe fallback) sends the user away and
-  // back — we must check for the result when the page mounts.
+  // Only fires when returning from signInWithRedirect (COOP popup fallback).
+  // getRedirectResult returns null in all other cases — safe no-op.
   useEffect(() => {
     let cancelled = false;
 
     const checkRedirectResult = async () => {
+      if (popupInProgressRef.current) return;
       try {
         const result = await getRedirectResult(auth);
-        if (!result || cancelled) return; // no redirect in progress
+        if (!result || cancelled) return;
 
         setIsLoading(true);
-        const { uid, email: googleEmail } = result.user;
-
-        const registered = await existsInDatabase(uid);
-        if (!registered) {
-          await signOut(auth);
-          if (!cancelled) {
-            setError(
-              `No Nexus account found for ${googleEmail}. ` +
-              `Please create an account first before signing in with Google.`
-            );
-            setIsLoading(false);
-          }
-          return;
-        }
-
-        if (!cancelled) await handleAuthSuccess(uid);
+        await processGoogleUser(result.user, cancelled);
       } catch (err) {
         if (!cancelled) {
           setError(err.message || 'Google sign-in failed. Please try again.');
@@ -132,9 +142,57 @@ export default function LogIn() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Stamp session + proceed to BotShield ────────────────────────────────
+  // ─────────────────────────────────────────────
+  // Core Google user processor — used by both
+  // popup and redirect flows.
+  //
+  // HOW GOOGLE SIGN-IN WORKS (no code needed from us):
+  // Firebase opens a Google-hosted popup. Google shows the account picker,
+  // password prompt, and 2-Step Verification if enabled — all on Google's
+  // own servers. Your app never sees the password. Only after the user
+  // passes Google's security does Firebase return a credential here.
+  //
+  // This function handles TWO cases:
+  // 1. Existing Nexus user → update last_login, proceed to dashboard
+  // 2. Brand new user      → auto-create their Supabase record from Google
+  //    profile data (name, email), then proceed to dashboard
+  //    (same as how Spotify, Airbnb, etc. handle "Continue with Google")
+  // ─────────────────────────────────────────────
+  const processGoogleUser = async (firebaseUser, cancelled = false) => {
+    const registered = await existsInDatabase(firebaseUser.uid);
+
+    if (!registered) {
+      // New user — create their record. Google accounts are always email-verified
+      // so no email verification step is needed.
+      await createGoogleUserRecord(firebaseUser);
+
+      // Send welcome notification (non-blocking)
+      const parts     = (firebaseUser.displayName ?? '').trim().split(/\s+/);
+      const firstName = parts[0] || firebaseUser.email.split('@')[0];
+      supabase.from('notifications').insert([{
+        user_id: firebaseUser.uid,
+        message: `Welcome to Nexus, ${firstName}! Your account is ready.`,
+        type:    'general',
+        is_read: false,
+      }]).then(() => {}).catch(() => {});
+
+    } else {
+      // Returning user — update last_login, non-blocking
+      supabase
+        .from('users')
+        .update({ last_login: new Date().toISOString() })
+        .eq('id', firebaseUser.uid)
+        .then(() => {}).catch((err) => console.warn('last_login update failed:', err.message));
+    }
+
+    if (!cancelled) {
+      sessionStorage.setItem(SESSION_KEY, 'true');
+      setShowShield(true);
+    }
+  };
+
+  // ── Stamp session for email/password path ───────────────────────────────
   const handleAuthSuccess = async (uid) => {
-    // Non-critical: update last_login timestamp — failure must not block login
     try {
       await supabase
         .from('users')
@@ -143,7 +201,6 @@ export default function LogIn() {
     } catch (err) {
       console.warn('last_login update failed (non-blocking):', err.message);
     }
-
     sessionStorage.setItem(SESSION_KEY, 'true');
     setShowShield(true);
   };
@@ -154,11 +211,9 @@ export default function LogIn() {
     setError('');
     setIsLoading(true);
 
-    // Trim whitespace — a common cause of "wrong password" confusion
     const trimmedEmail = email.trim();
 
     try {
-      // Honour the "keep me logged in" preference before authenticating
       await setPersistence(
         auth,
         keepLoggedIn ? browserLocalPersistence : browserSessionPersistence
@@ -166,7 +221,7 @@ export default function LogIn() {
 
       const { user } = await signInWithEmailAndPassword(auth, trimmedEmail, password);
 
-      // 1. Email must be verified
+      // Email must be verified for email/password accounts
       if (!user.emailVerified) {
         await signOut(auth);
         setError('Please verify your email before logging in. Check your inbox for the verification link.');
@@ -174,7 +229,7 @@ export default function LogIn() {
         return;
       }
 
-      // 2. User must exist in our Supabase DB (completed sign-up)
+      // Must have completed signup (Supabase record exists)
       const registered = await existsInDatabase(user.uid);
       if (!registered) {
         await signOut(auth);
@@ -186,75 +241,65 @@ export default function LogIn() {
       await handleAuthSuccess(user.uid);
 
     } catch (err) {
-      setError(err.message?.startsWith('Unable to verify')
+      // Surface DB errors with their own message; Firebase errors use the map
+      const msg = (err.message?.startsWith('Unable to verify') || err.message?.startsWith('Failed to create'))
         ? err.message
-        : firebaseErrorMessage(err.code));
+        : firebaseErrorMessage(err.code);
+      setError(msg);
       setIsLoading(false);
     }
   };
 
-  // ── Google / social login ────────────────────────────────────────────────
+  // ── Google login / sign-up ───────────────────────────────────────────────
   const handleGoogleLogin = async () => {
     setError('');
     setIsLoading(true);
+    popupInProgressRef.current = true;
 
     try {
-      // Try popup first (works in most browsers / environments).
-      // If blocked by Cross-Origin-Opener-Policy (COOP), we catch the specific
-      // error code and fall back to redirect — the result is picked up by the
-      // useEffect above on the next page load.
+      // Firebase opens Google's popup — Google handles password + 2FA entirely
       const userCredential = await signInWithPopup(auth, googleProvider);
-      const { uid, email: googleEmail } = userCredential.user;
+      popupInProgressRef.current = false;
+      await processGoogleUser(userCredential.user);
 
-      const registered = await existsInDatabase(uid);
-      if (!registered) {
-        await signOut(auth);
-        setError(
-          `No Nexus account found for ${googleEmail}. ` +
-          `Please create an account first before signing in with Google.`
-        );
+    } catch (err) {
+      popupInProgressRef.current = false;
+
+      // User deliberately closed the popup — not an error
+      if (err.code === 'auth/popup-closed-by-user') {
         setIsLoading(false);
         return;
       }
 
-      await handleAuthSuccess(uid);
-
-    } catch (err) {
-      // COOP / popup-blocked → fall back to full-page redirect silently
-      if (
-        err.code === 'auth/popup-blocked' ||
-        err.code === 'auth/popup-closed-by-user' ||
-        err.code === 'auth/cancelled-popup-request'
-      ) {
-        // For popup-closed-by-user we do nothing (user cancelled intentionally)
-        if (err.code === 'auth/popup-closed-by-user') {
-          setIsLoading(false);
-          return;
-        }
-        // For blocked popups, redirect is the correct real-world fallback
+      // Popup blocked by COOP header → fall back to full-page redirect
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
         try {
           await signInWithRedirect(auth, googleProvider);
-          // Page will reload — result handled in useEffect above
+          // Page navigates away — result handled in useEffect on return
           return;
-        } catch (redirectErr) {
-          setError('Failed to sign in with Google. Please try again.');
+        } catch {
+          setError('Failed to open Google sign-in. Please try again.');
           setIsLoading(false);
           return;
         }
       }
 
-      setError(firebaseErrorMessage(err.code) || 'Failed to sign in with Google. Please try again.');
+      // Surface DB errors with their own message
+      const msg = (err.message?.startsWith('Unable to verify') || err.message?.startsWith('Failed to create'))
+        ? err.message
+        : (firebaseErrorMessage(err.code) || 'Failed to sign in with Google. Please try again.');
+      setError(msg);
       setIsLoading(false);
     }
   };
 
-  // ── Apple login — placeholder with inline message ────────────────────────
+  // ── Apple — not yet enabled ──────────────────────────────────────────────
   const handleAppleLogin = () => {
     setError('Apple Sign-In requires an Apple Developer account and is not yet enabled.');
   };
 
   // ─────────────────────────────────────────────
-  // Render BotShield after successful auth
+  // BotShield gate after successful auth
   // ─────────────────────────────────────────────
   if (showShield) {
     return <BotShield onVerified={() => navigate('/dashboard')} />;
@@ -284,7 +329,7 @@ export default function LogIn() {
         <div className="mt-8 mx-auto w-full max-w-[400px]">
           <div className="bg-white py-8 px-6 shadow-xl shadow-gray-200/50 rounded-[2.5rem] border border-gray-100 sm:px-10">
 
-            {/* Redirect message (e.g. "please log in to continue") */}
+            {/* Redirect message */}
             {redirectMessage && (
               <div className="mb-4 p-3 bg-cyan-50 border-l-4 border-cyan-500 text-cyan-700 text-xs font-bold rounded">
                 {redirectMessage}
@@ -395,7 +440,7 @@ export default function LogIn() {
                 </div>
               </div>
 
-              {/* ── Keep me logged in + forgot password ── */}
+              {/* ── Keep logged in + forgot ── */}
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -406,10 +451,7 @@ export default function LogIn() {
                   />
                   <span className="text-xs text-gray-500 font-bold">Keep me logged in</span>
                 </label>
-                <Link
-                  to="/forgot-password"
-                  className="font-bold text-cyan-600 hover:text-cyan-500 text-xs"
-                >
+                <Link to="/forgot-password" className="font-bold text-cyan-600 hover:text-cyan-500 text-xs">
                   Forgot?
                 </Link>
               </div>

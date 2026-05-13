@@ -10,7 +10,7 @@ const socialFeed = [
     {
         name: "Bridget Kwenda",
         location: "MBA Borrower",
-        time: "2h ago",
+         
         title: "Simplified the MBA funding process entirely",
         comment: "Nexus made it happen when others couldn't. Found a rate 1.5% lower than my local bank using their advanced matching tools.",
         Image: Bridget
@@ -18,7 +18,7 @@ const socialFeed = [
     {
         name: "Elena Mutasa",
         location: "Parent Plus",
-        time: "2h ago",
+         
         title: "Clean transparency for my daughter's loans",
         comment: "Was worried about Parent Plus terms, but the Nexus transparency protocol made everything clear. Zero hidden fees, just pure honesty.",
         Image: Elena
@@ -26,7 +26,7 @@ const socialFeed = [
     {
         name: "Jordan Muzeza",
         location: "Debt Refinance",
-        time: "2h ago",
+         
         title: "Actually helped me save $100+ every month",
         comment: "Autonomous fraud protection and clear savings. Swapping my car loan was the best financial decision I made this year.",
         Image: Jordan
@@ -194,7 +194,7 @@ export default function TrustSection() {
                                         <div>
                                             <h4 className="font-extrabold text-[#0B1E3D] text-lg leading-tight">{post.name}</h4>
                                             <p className="text-cyan-600 text-sm font-bold flex gap-2">
-                                                <span>{post.location}</span>●
+                                                <span>{post.location}</span>
                                                 <span>{post.time}</span>
                                             </p>
                                         </div>

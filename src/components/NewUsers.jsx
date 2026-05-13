@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import CryptoJS from 'crypto-js'; // static import — dynamic import was crashing on some bundlers
+import CryptoJS from 'crypto-js';
 import { auth } from '../firebase';
 import { supabase } from '../supabaseClient';
 import logo from '../assets/logo.png';
@@ -49,7 +49,6 @@ export default function NewUsers() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Context from CheckRate (guest application)
   const fromCheckRate   = !!location.state?.applicationId;
   const redirectMessage = location.state?.message      ?? null;
   const prefillEmail    = location.state?.prefillEmail ?? '';
@@ -79,7 +78,7 @@ export default function NewUsers() {
     number:  /[0-9]/.test(form.password),
     special: /[!@#$%^&*]/.test(form.password),
   };
-  const pwOk    = pw.length && pw.number && pw.special;
+  const pwOk      = pw.length && pw.number && pw.special;
   const canSubmit = pwOk && matchOk && emailOk
                     && form.firstName.trim()
                     && form.lastName.trim()
@@ -128,18 +127,25 @@ export default function NewUsers() {
         return;
       }
 
-      // 2 — reCAPTCHA (only if provider is available — never crash without it)
+      // 2 — reCAPTCHA (only if provider available)
       if (executeRecaptcha) {
         try { await executeRecaptcha('signup'); } catch { /* ignore */ }
       }
 
       // 3 — Create Firebase Auth account
-      const { user } = await createUserWithEmailAndPassword(auth, form.email.trim().toLowerCase(), form.password);
+      const { user } = await createUserWithEmailAndPassword(
+        auth,
+        form.email.trim().toLowerCase(),
+        form.password
+      );
 
       // 4 — Send verification email
       await sendEmailVerification(user);
 
-      // 5 — Save to Supabase (upsert so retries don't 409)
+      // 5 — Save to Supabase
+      // CRITICAL: if this fails the user has a Firebase account but no DB record.
+      // Login would then fail with "no account found". We throw so the user knows
+      // and can try again (upsert means retrying is safe — no duplicate error).
       const { error: upsertErr } = await supabase
         .from('users')
         .upsert(
@@ -150,13 +156,19 @@ export default function NewUsers() {
             email:                  form.email.trim().toLowerCase(),
             province:               form.province,
             loan_application_count: 0,
+            created_at:             new Date().toISOString(),
+            last_login:             new Date().toISOString(),
           }],
           { onConflict: 'id' }
         );
 
-      if (upsertErr) console.error('Supabase upsert failed:', upsertErr.message);
+      if (upsertErr) {
+        // This is a hard failure — surface it so the user doesn't think
+        // signup succeeded when their DB record wasn't actually created.
+        throw new Error('Account created but profile save failed. Please try logging in — if it fails, contact support.');
+      }
 
-      // 6 — Welcome notification (skip if already sent)
+      // 6 — Welcome notification (skip if already sent — safe on retry)
       const { data: existingWelcome } = await supabase
         .from('notifications')
         .select('id')
@@ -182,7 +194,8 @@ export default function NewUsers() {
           .is('user_id', null);
       }
 
-      setIsSubmitting(false);
+      // FIX: set isDone directly — resetting isSubmitting first causes a
+      // brief flash back to the form before the success screen renders.
       setIsDone(true);
 
     } catch (err) {
@@ -201,6 +214,8 @@ export default function NewUsers() {
           setError('Network error. Check your connection and try again.');
           break;
         default:
+          // Catches our custom thrown errors (Supabase failure, etc.) with
+          // their exact message, plus any other unexpected Firebase errors.
           setError(err.message || 'Signup failed. Please try again.');
       }
     }
@@ -223,7 +238,7 @@ export default function NewUsers() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // EMAIL VERIFICATION SCREEN (shown after successful signup)
+  // EMAIL VERIFICATION SCREEN
   // ─────────────────────────────────────────────────────────────────────────
   if (isDone) {
     return (
@@ -244,13 +259,9 @@ export default function NewUsers() {
 
           <h2 className="text-2xl font-bold text-[#0B1E3D] mb-3">Account Created!</h2>
           <h3 className="text-lg font-bold text-gray-600 mb-3">Now verify your email</h3>
-          <p className="text-gray-500 text-sm mb-1">
-            We sent a verification link to
-          </p>
+          <p className="text-gray-500 text-sm mb-1">We sent a verification link to</p>
           <p className="font-bold text-[#0B1E3D] text-sm mb-4">{form.email}</p>
-          <p className="text-gray-400 text-xs mb-2">
-            Click the link in the email to activate your account.
-          </p>
+          <p className="text-gray-400 text-xs mb-2">Click the link in the email to activate your account.</p>
           <p className="text-gray-400 text-xs mb-6">
             Can't find it? Check your <strong>spam or junk</strong> folder.
           </p>
