@@ -198,12 +198,12 @@ function App() {
   }
 
   return (
-    <GoogleReCaptchaProvider reCaptchaKey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}>
+   
       <Router>
         <ScrollToTop />
         <AppContent user={user} />
       </Router>
-    </GoogleReCaptchaProvider>
+   
   );
 }
 
